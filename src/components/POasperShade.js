@@ -13,7 +13,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 // ---------- Google Apps Script Configuration ----------
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx3nXJSpN0LcvIfIggJni9Bohj8LlduWkQcrFkyyfjGcOCjDhGSW-GkxGquO9OHqhcozQ/exec"; // Your URL
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyM5rwPfx5rpvhNCcIYT4JybUhHSb5fAClauku9W6YKnisJ-Z6Xg4H7bjKCmQiBiqVePA/exec"; // Your URL
 
 // ---------- Caching Helpers ----------
 const cache = new Map();
@@ -60,6 +60,33 @@ function generatePONumber() {
   const day = date.getDate().toString().padStart(2, '0');
   const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
   return `PO-${year}${month}${day}-${random}`;
+}
+
+/** QR (QuickChart) -> dataURL */
+async function toDataURL_QR(qrText, size = 300) {
+  const src = `https://quickchart.io/qr?text=${encodeURIComponent(qrText)}&size=${size}&margin=4&ecLevel=H`;
+  return await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      resolve(c.toDataURL("image/png"));
+    };
+    img.onerror = () => reject(new Error("QR image load failed"));
+    img.src = src;
+  });
+}
+
+/** Build PO QR URLs that match Apps Script (action=gate/receive) */
+function buildPoQrUrls({ base, poNo, orderDate, expectedDate, supervisorName }) {
+  const enc = encodeURIComponent;
+  const who = supervisorName ? `&who=${enc(supervisorName)}` : "";
+  const gateUrl = `${base}?action=gate&po=${enc(poNo)}&date=${enc(orderDate || "")}${who}`;
+  const recvUrl = `${base}?action=receive&po=${enc(poNo)}&rdate=${enc(expectedDate || "")}${who}`;
+  return { gateUrl, recvUrl };
 }
 
 // ============================
@@ -545,17 +572,17 @@ function parseMatrix(rows, lotNo) {
     if (hasColor && hasCT) { headerIdx = i; break; }
   }
   if (headerIdx === -1) {
-    return { 
-      lotNumber, 
-      style, 
-      fabric, 
-      garmentType, 
-      brand, 
-      partyName, 
-      season, 
-      sizes: [], 
-      rows: [], 
-      totals: { perSize: {}, grand: 0 } 
+    return {
+      lotNumber,
+      style,
+      fabric,
+      garmentType,
+      brand,
+      partyName,
+      season,
+      sizes: [],
+      rows: [],
+      totals: { perSize: {}, grand: 0 }
     };
   }
 
@@ -618,17 +645,17 @@ function parseMatrix(rows, lotNo) {
     totals.grand += row.totalPcs ?? 0;
   }
 
-  return { 
-    lotNumber, 
-    style, 
-    fabric, 
-    garmentType, 
-    brand, 
-    partyName, 
-    season, 
-    sizes: sizeKeys, 
-    rows: body, 
-    totals 
+  return {
+    lotNumber,
+    style,
+    fabric,
+    garmentType,
+    brand,
+    partyName,
+    season,
+    sizes: sizeKeys,
+    rows: body,
+    totals
   };
 }
 
@@ -648,7 +675,7 @@ async function postPOToSheet(webAppUrl, payload, { maxRetries = 3 } = {}) {
         mode: "cors",
         body,
       });
-      
+
       // Try to parse JSON response
       const text = await res.text();
       let json;
@@ -667,12 +694,12 @@ async function postPOToSheet(webAppUrl, payload, { maxRetries = 3 } = {}) {
       if (!res.ok) {
         return { ok: false, status: res.status, json };
       }
-      
+
       // Check for ok flag in response (Apps Script returns { ok: true, ... })
       if (json && json.ok === false) {
         return { ok: false, status: json.code || res.status, json };
       }
-      
+
       return { ok: true, json };
     } catch (err) {
       console.error('Fetch error:', err);
@@ -694,10 +721,10 @@ async function postPOToSheet(webAppUrl, payload, { maxRetries = 3 } = {}) {
 const savePODataToSheet = async (poData) => {
   try {
     console.log('Saving PO data to Google Sheets:', poData);
-    
+
     // Use the working post helper from POLot component
     const res = await postPOToSheet(APPS_SCRIPT_URL, poData);
-    
+
     if (!res.ok) {
       const msg =
         res.json?.error ||
@@ -706,9 +733,9 @@ const savePODataToSheet = async (poData) => {
         `HTTP ${res.status || "?"}`;
       return { success: false, error: msg };
     }
-    
+
     return { success: true, data: res.json };
-    
+
   } catch (error) {
     console.error('Error saving PO data to Google Sheets:', error);
     return {
@@ -723,19 +750,19 @@ const fetchSavedPOs = (limit = 50, offset = 0) => {
   return new Promise((resolve, reject) => {
     try {
       const callbackName = 'jsonp_callback_' + Date.now();
-      
+
       const script = document.createElement('script');
       const url = `${APPS_SCRIPT_URL}?action=getPOs&limit=${limit}&offset=${offset}&callback=${callbackName}`;
-      
+
       window[callbackName] = (data) => {
         delete window[callbackName];
         document.body.removeChild(script);
         resolve(data);
       };
-      
+
       script.src = url;
       document.body.appendChild(script);
-      
+
       setTimeout(() => {
         if (window[callbackName]) {
           delete window[callbackName];
@@ -743,7 +770,7 @@ const fetchSavedPOs = (limit = 50, offset = 0) => {
           reject(new Error('Timeout fetching POs'));
         }
       }, 10000);
-      
+
     } catch (error) {
       console.error('Error fetching POs:', error);
       reject(error);
@@ -756,19 +783,19 @@ const searchPOs = (query) => {
   return new Promise((resolve, reject) => {
     try {
       const callbackName = 'jsonp_callback_' + Date.now();
-      
+
       const script = document.createElement('script');
       const url = `${APPS_SCRIPT_URL}?action=search&q=${encodeURIComponent(query)}&callback=${callbackName}`;
-      
+
       window[callbackName] = (data) => {
         delete window[callbackName];
         document.body.removeChild(script);
         resolve(data);
       };
-      
+
       script.src = url;
       document.body.appendChild(script);
-      
+
       setTimeout(() => {
         if (window[callbackName]) {
           delete window[callbackName];
@@ -776,7 +803,7 @@ const searchPOs = (query) => {
           reject(new Error('Timeout searching POs'));
         }
       }, 10000);
-      
+
     } catch (error) {
       console.error('Error searching POs:', error);
       reject(error);
@@ -789,19 +816,19 @@ const getPOByNumber = (poNumber) => {
   return new Promise((resolve, reject) => {
     try {
       const callbackName = 'jsonp_callback_' + Date.now();
-      
+
       const script = document.createElement('script');
       const url = `${APPS_SCRIPT_URL}?action=getPO&poNumber=${encodeURIComponent(poNumber)}&callback=${callbackName}`;
-      
+
       window[callbackName] = (data) => {
         delete window[callbackName];
         document.body.removeChild(script);
         resolve(data);
       };
-      
+
       script.src = url;
       document.body.appendChild(script);
-      
+
       setTimeout(() => {
         if (window[callbackName]) {
           delete window[callbackName];
@@ -809,7 +836,7 @@ const getPOByNumber = (poNumber) => {
           reject(new Error('Timeout fetching PO'));
         }
       }, 10000);
-      
+
     } catch (error) {
       console.error('Error fetching PO:', error);
       reject(error);
@@ -831,7 +858,7 @@ export default function POasperShade() {
   // GST State
   const [gstEnabled, setGstEnabled] = useState(false);
   const [gstPercentage, setGstPercentage] = useState(18);
-  
+
   // PO Number State
   const [poNumber, setPoNumber] = useState(() => generatePONumber());
 
@@ -849,16 +876,16 @@ export default function POasperShade() {
   const [rates, setRates] = useState({});
   const [departments, setDepartments] = useState({});
   const [accessories, setAccessories] = useState({});
-  
+
   // State for removed shades
   const [removedShades, setRemovedShades] = useState({});
-  
+
   // State for expanded/collapsed sections
   const [expandedSections, setExpandedSections] = useState({
     summary: true,
     details: true
   });
-  
+
   // State for selected shades (bulk actions)
   const [selectedShades, setSelectedShades] = useState({});
 
@@ -910,7 +937,7 @@ export default function POasperShade() {
       const initialAccessories = {};
       const initialRemovedShades = {};
       const initialSelectedShades = {};
-      
+
       matrix.rows.forEach((row, index) => {
         const key = `${row.color}-${index}`;
         initialManualQty[key] = '';
@@ -920,7 +947,7 @@ export default function POasperShade() {
         initialRemovedShades[key] = false;
         initialSelectedShades[key] = false;
       });
-      
+
       setManualQty(initialManualQty);
       setRates(initialRates);
       setDepartments(initialDepartments);
@@ -1028,7 +1055,7 @@ export default function POasperShade() {
   // Handle bulk autofill
   const handleBulkAutofill = () => {
     const selectedKeys = Object.keys(selectedShades).filter(key => selectedShades[key]);
-    
+
     if (selectedKeys.length === 0) {
       alert('Please select at least one shade to use as template');
       return;
@@ -1062,7 +1089,7 @@ export default function POasperShade() {
   // Calculate subtotal (without GST)
   const calculateSubtotal = useMemo(() => {
     if (!matrix || !matrix.rows) return 0;
-    
+
     let total = 0;
     matrix.rows.forEach((row, index) => {
       const key = `${row.color}-${index}`;
@@ -1165,25 +1192,47 @@ export default function POasperShade() {
     }
   };
 
-  const generatePDF = (poNumber, gstEnabled, gstPercentage, issueDate, supervisor, priority, supplierName) => {
-    // Use A3 paper size (landscape orientation for more width)
-    const doc = new jsPDF({ 
-      unit: "pt", 
-      format: "a3", 
-      orientation: "portrait" 
+  const generatePDF = async (poNumber, gstEnabled, gstPercentage, issueDate, supervisor, priority, supplierName) => {
+    // Generate QR URLs
+    const { gateUrl, recvUrl } = buildPoQrUrls({
+      base: APPS_SCRIPT_URL,
+      poNo: poNumber,
+      orderDate: issueDate,
+      expectedDate: issueDate,
+      supervisorName: supervisor
     });
-    
+
+    let qrGateImage = null;
+    let qrRecvImage = null;
+    try {
+      const [gQR, rQR] = await Promise.all([
+        toDataURL_QR(gateUrl, 320),
+        toDataURL_QR(recvUrl, 320)
+      ]);
+      qrGateImage = gQR;
+      qrRecvImage = rQR;
+    } catch (err) {
+      console.error("Failed to load QR codes:", err);
+    }
+
+    // Use A3 paper size (landscape orientation for more width)
+    const doc = new jsPDF({
+      unit: "pt",
+      format: "a3",
+      orientation: "portrait"
+    });
+
     doc.setFont("times", "normal");
     doc.setLineWidth(0.6);
 
     // ---- helpers
-    const page = { 
-      w: doc.internal.pageSize.getWidth(), 
-      h: doc.internal.pageSize.getHeight(), 
+    const page = {
+      w: doc.internal.pageSize.getWidth(),
+      h: doc.internal.pageSize.getHeight(),
       m: 40, // margins
-      gap: 12 
+      gap: 12
     };
-    
+
     const setSize = (s) => doc.setFontSize(s);
     const bold = () => doc.setFont(undefined, "bold");
     const normal = () => doc.setFont(undefined, "normal");
@@ -1201,8 +1250,8 @@ export default function POasperShade() {
     const drawFrame = () => roundRect(16, 16, page.w - 32, page.h - 32, 8, "S");
     let y = page.m;
 
-    const SIG_H = 92;
-    const BOTTOM_RESERVED = 18 + 8 + 96 + 10 + SIG_H + 8;
+    const SIG_H = 120;
+    const BOTTOM_RESERVED = SIG_H + 30;
 
     const needSpace = (h, withHeader = false) => {
       const usableBottom = page.h - page.m - BOTTOM_RESERVED;
@@ -1233,21 +1282,23 @@ export default function POasperShade() {
     y += 30;
 
     // =========================
-    // TOP ROW: PO DETAILS | LOT INFO | SUPPLIER | PRIORITY
+    // TOP ROW: PO DETAILS | LOT INFO | SUPPLIER | PRIORITY | GATE IN SCAN
     // =========================
     (function topRow() {
       const innerW = page.w - 2 * page.m;
-      const rPO = 0.3, rLot = 0.3, rSupplier = 0.2, rPriority = 0.2;
-      const wAvail = innerW - page.gap * 3;
+      const rPO = 0.22, rLot = 0.22, rSupplier = 0.18, rPriority = 0.16;
+      const wAvail = innerW - page.gap * 4;
       const wPO = Math.floor(wAvail * rPO);
       const wLot = Math.floor(wAvail * rLot);
       const wSupplier = Math.floor(wAvail * rSupplier);
-      const wPriority = wAvail - wPO - wLot - wSupplier;
+      const wPriority = Math.floor(wAvail * rPriority);
+      const wGate = wAvail - wPO - wLot - wSupplier - wPriority;
 
       const x1 = page.m;
       const x2 = x1 + wPO + page.gap;
       const x3 = x2 + wLot + page.gap;
       const x4 = x3 + wSupplier + page.gap;
+      const x5 = x4 + wPriority + page.gap;
 
       // PO DETAILS
       const metaPad = 12, lblW = 70;
@@ -1279,7 +1330,11 @@ export default function POasperShade() {
       // PRIORITY
       const priorityH = 22 + 24 + 16;
 
-      const blockH = Math.max(metaH, lotH, supplierH, priorityH);
+      // GATE IN SCAN
+      const QR_SIDE = 96;
+      const gateH = 18 + 10 + QR_SIDE + 10;
+
+      const blockH = Math.max(metaH, lotH, supplierH, priorityH, gateH);
       needSpace(blockH);
 
       // Draw PO DETAILS
@@ -1300,11 +1355,11 @@ export default function POasperShade() {
       bold(); text("LOT INFORMATION", x2 + 12, y + 14); normal();
       line(x2 + 12, y + 18, x2 + wLot - 12, y + 18);
       let ly = y + 30;
-      lotLines.forEach((ln) => { 
-        if (ln) { 
-          text(ln, x2 + lotPad, ly); 
-          ly += 12; 
-        } 
+      lotLines.forEach((ln) => {
+        if (ln) {
+          text(ln, x2 + lotPad, ly);
+          ly += 12;
+        }
       });
 
       // Draw SUPPLIER INFO
@@ -1313,11 +1368,11 @@ export default function POasperShade() {
       bold(); text("SUPPLIER", x3 + 12, y + 14); normal();
       line(x3 + 12, y + 18, x3 + wSupplier - 12, y + 18);
       let sly = y + 30;
-      supplierLines.forEach((ln) => { 
-        if (ln) { 
-          text(ln, x3 + lotPad, sly); 
-          sly += 12; 
-        } 
+      supplierLines.forEach((ln) => {
+        if (ln) {
+          text(ln, x3 + lotPad, sly);
+          sly += 12;
+        }
       });
 
       // Draw PRIORITY
@@ -1325,7 +1380,7 @@ export default function POasperShade() {
       setSize(10);
       bold(); text("PRIORITY", x4 + 12, y + 14); normal();
       line(x4 + 12, y + 18, x4 + wPriority - 12, y + 18);
-      
+
       // Priority badge
       const priorityColors = {
         'Low': [34, 197, 94],
@@ -1334,26 +1389,37 @@ export default function POasperShade() {
         'Urgent': [239, 68, 68]
       };
       const color = priorityColors[priority] || [59, 130, 246];
-      
+
       doc.setFillColor(color[0], color[1], color[2]);
       doc.setDrawColor(color[0], color[1], color[2]);
       doc.setTextColor(255, 255, 255);
-      
+
       const priorityBox = {
         x: x4 + 12,
-        y: y + 30,
+        y: y + 30 + (blockH - 30 - 24) / 2,
         w: wPriority - 24,
         h: 24
       };
       doc.roundedRect(priorityBox.x, priorityBox.y, priorityBox.w, priorityBox.h, 4, 4, 'FD');
-      
+
       setSize(12);
       bold();
-      ctext(priority, priorityBox.x + priorityBox.w/2, priorityBox.y + 16);
-      
+      ctext(priority, priorityBox.x + priorityBox.w / 2, priorityBox.y + 16);
+
       // Reset colors
       doc.setTextColor(0, 0, 0);
       normal();
+
+      // Draw GATE-IN SCAN
+      roundRect(x5, y, wGate, blockH, 7, "S");
+      setSize(10);
+      bold(); text("GATE IN - SCAN", x5 + 12, y + 14); normal();
+      line(x5 + 12, y + 18, x5 + wGate - 12, y + 18);
+      if (qrGateImage) {
+        const qx = x5 + (wGate - QR_SIDE) / 2;
+        const qy = y + 18 + (blockH - 18 - QR_SIDE) / 2;
+        try { doc.addImage(qrGateImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch { }
+      }
 
       y += blockH + 16;
     })();
@@ -1371,7 +1437,7 @@ export default function POasperShade() {
         const qty = parseFloat(manualQty[key]) || 0;
         const rate = parseFloat(rates[key]) || 0;
         const amt = qty * rate;
-        
+
         return {
           line: idx + 1,
           department: departments[key] || '',
@@ -1417,9 +1483,9 @@ export default function POasperShade() {
 
       const totalColWidth = lineW + deptW + lotNoW + shadeW + brandW + accW + lotQW + manQW + rateW + amountW;
       const scaleFactor = innerW / totalColWidth;
-      
+
       const scaled = (w) => Math.floor(w * scaleFactor);
-      
+
       const cols = [
         { key: "line", title: "#", w: scaled(lineW), align: "center" },
         { key: "department", title: "DEPARTMENT", w: scaled(deptW), align: "center" },
@@ -1429,11 +1495,11 @@ export default function POasperShade() {
         { key: "accessory", title: "ACCESSORY", w: scaled(accW), align: "center" },
         { key: "lotQty", title: "LOT QTY", w: scaled(lotQW), align: "center" },
         { key: "manualQty", title: "MANUAL QTY", w: scaled(manQW), align: "center" },
-        { key: "rate", title: "RATE (₹)", w: scaled(rateW), align: "center" },
-        { key: "amount", title: "TOTAL (₹)", w: scaled(amountW), align: "center" },
+        { key: "rate", title: "RATE", w: scaled(rateW), align: "center" },
+        { key: "amount", title: "TOTAL", w: scaled(amountW), align: "center" },
       ];
-      
-      const xs = [x0]; 
+
+      const xs = [x0];
       cols.forEach((c, i) => xs.push(xs[i] + c.w));
 
       const headerH = 35;
@@ -1441,55 +1507,55 @@ export default function POasperShade() {
 
       const drawHeader = () => {
         needSpace(headerH, true);
-        
+
         doc.setFillColor(41, 128, 185);
         doc.rect(x0, y, innerW, headerH, 'F');
         doc.setTextColor(255, 255, 255);
-        setSize(9); 
+        setSize(9);
         bold();
-        
+
         cols.forEach((c, i) => {
           let cx;
           if (c.align === "right") cx = xs[i + 1] - 6;
           else if (c.align === "center") cx = (xs[i] + xs[i + 1]) / 2;
           else cx = xs[i] + 6;
-          
-          const opt = { 
-            align: c.align === "right" ? "right" : c.align === "center" ? "center" : "left" 
+
+          const opt = {
+            align: c.align === "right" ? "right" : c.align === "center" ? "center" : "left"
           };
           text(c.title, cx, y + 22, opt);
         });
-        
+
         doc.setDrawColor(255, 255, 255);
         doc.setLineWidth(0.5);
         for (let i = 1; i < xs.length - 1; i++) {
           line(xs[i], y, xs[i], y + headerH);
         }
-        
+
         doc.setTextColor(0, 0, 0);
         doc.setDrawColor(0, 0, 0);
         doc.setLineWidth(0.6);
-        normal(); 
+        normal();
         y += headerH;
       };
 
       const drawRow = (r, idx) => {
         const rowH = baseH;
         needSpace(rowH, true);
-        
+
         if (idx % 2 === 0) {
           doc.setFillColor(249, 250, 251);
           doc.rect(x0, y, innerW, rowH, 'F');
         }
-        
+
         doc.rect(x0, y, innerW, rowH, 'S');
         for (let i = 1; i < xs.length - 1; i++) {
           line(xs[i], y, xs[i], y + rowH);
         }
-        
+
         const yy = y + 15;
         setSize(9);
-        
+
         ctext(r.line, (xs[0] + xs[1]) / 2, yy);
         text(r.department || "", xs[1] + 6, yy);
         ctext(r.lotNumber || "", (xs[2] + xs[3]) / 2, yy);
@@ -1500,25 +1566,25 @@ export default function POasperShade() {
         rtext(r._manualQtyStr, xs[8] - 6, yy);
         rtext(r._rateStr, xs[9] - 6, yy);
         rtext(r._amountStr, xs[10] - 6, yy);
-        
+
         y += rowH;
         return r.amount;
       };
 
-      const drawTotalRow = (label, value, colSpan = 9) => {
+      const drawTotalRow = (label, value, colSpan = 9, showQty = false) => {
         const rowH = 26;
         needSpace(rowH, true);
-        
+
         doc.setFillColor(241, 245, 249);
         doc.rect(x0, y, innerW, rowH, 'F');
         doc.rect(x0, y, innerW, rowH, 'S');
         for (let i = 1; i < xs.length - 1; i++) {
           line(xs[i], y, xs[i], y + rowH);
         }
-        
-        setSize(10); 
+
+        setSize(10);
         bold();
-        
+
         if (colSpan === 9) {
           text(label, x0 + 12, y + 17);
           rtext(money(value), xs[10] - 6, y + 17);
@@ -1526,24 +1592,30 @@ export default function POasperShade() {
           text(label, xs[colSpan] + 12, y + 17);
           rtext(money(value), xs[10] - 6, y + 17);
         }
-        
+
+        if (showQty) {
+          rtext((totalSystemQty || 0).toLocaleString(), xs[7] - 6, y + 17);
+          rtext((totalManualQty || 0).toLocaleString(), xs[8] - 6, y + 17);
+          ctext("-", (xs[8] + xs[9]) / 2, y + 17);
+        }
+
         normal();
         y += rowH;
       };
 
       drawHeader();
-      let sum = 0; 
+      let sum = 0;
       rows.forEach((r, i) => (sum += drawRow(r, i)));
-      
-      drawTotalRow("SUBTOTAL", calculateSubtotal, 9);
-      
+
+      drawTotalRow("SUBTOTAL", calculateSubtotal, 9, true);
+
       if (gstEnabled) {
-        drawTotalRow(`GST (${gstPercentage}%)`, gstAmount, 9);
-        drawTotalRow("GRAND TOTAL", calculateGrandTotal, 9);
+        drawTotalRow(`GST (${gstPercentage}%)`, gstAmount, 9, false);
+        drawTotalRow("GRAND TOTAL", calculateGrandTotal, 9, true);
       } else {
-        drawTotalRow("GRAND TOTAL", calculateSubtotal, 9);
+        drawTotalRow("GRAND TOTAL", calculateSubtotal, 9, true);
       }
-      
+
       setSize(8);
       doc.setTextColor(100, 100, 100);
       text(`Total Items: ${rows.length} shades`, x0, y + 10);
@@ -1551,67 +1623,62 @@ export default function POasperShade() {
     })();
 
     // =========================
-    // BOTTOM SECTION - REMARKS AND SIGNATURES
+    // BOTTOM SECTION - SIGNATURES & MATERIAL RECEIVED
     // =========================
     (function bottomBlocks() {
       const innerW = page.w - 2 * page.m;
-      const colW = (innerW - page.gap * 2) / 3;
-      const x1 = page.m, x2 = x1 + colW + page.gap, x3 = x2 + colW + page.gap;
+      const colW = (innerW - page.gap * 3) / 4;
+      const x1 = page.m;
+      const x2 = x1 + colW + page.gap;
+      const x3 = x2 + colW + page.gap;
+      const x4 = x3 + colW + page.gap;
 
-      if (y > page.h - page.m - 140) {
+      if (y > page.h - page.m - SIG_H - 10) {
         doc.addPage();
         drawFrame();
         y = page.m;
       } else {
-        y = Math.max(y, page.h - page.m - 140);
+        y = Math.max(y + 15, page.h - page.m - SIG_H - 20);
       }
 
-      const bigW = colW * 2 + page.gap;
-      roundRect(x1, y, bigW, 70, 7, "S");
-      setSize(10);
-      bold(); text("REMARKS", x1 + 10, y + 14); normal();
-      line(x1 + 10, y + 18, x1 + bigW - 10, y + 18);
-      
-      setSize(9);
-      text("1. This is a system generated document", x1 + 10, y + 32);
-      text("2. Rates are as per agreement", x1 + 10, y + 44);
-      text("3. Subject to Jaipur jurisdiction", x1 + 10, y + 56);
+      const sigTop = y;
+      const QR_SIDE = 96;
 
-      roundRect(x2, y, colW, 70, 7, "S");
+      // 1. MATERIAL RECEIVED SCAN BOX
+      roundRect(x1, sigTop, colW, SIG_H, 7, "S");
       setSize(10);
-      bold(); text("TERMS", x2 + 10, y + 14); normal();
-      line(x2 + 10, y + 18, x2 + colW - 10, y + 18);
-      
-      setSize(9);
-      text("Payment: 30 days", x2 + 10, y + 32);
-      text("Delivery: Within 7 days", x2 + 10, y + 44);
-      text("GST: " + (gstEnabled ? gstPercentage + "%" : "Not Applicable"), x2 + 10, y + 56);
+      bold(); text("MATERIAL RECEIVED", x1 + 10, sigTop + 14); normal();
+      line(x1 + 10, sigTop + 18, x1 + colW - 10, sigTop + 18);
+      if (qrRecvImage) {
+        const qx = x1 + (colW - QR_SIDE) / 2;
+        const qy = sigTop + 18 + (SIG_H - 18 - QR_SIDE) / 2;
+        try { doc.addImage(qrRecvImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch { }
+      }
 
-      const sigTop = y + 80;
-      
-      [x1, x2, x3].forEach((x) => roundRect(x, sigTop, colW, 60, 7, "S"));
-      
+      // 2. SIGNATURE BOXES
+      [x2, x3, x4].forEach((x) => roundRect(x, sigTop, colW, SIG_H, 7, "S"));
+
       setSize(10); bold();
-      text("PREPARED BY", x1 + 10, sigTop + 14);
-      text("APPROVED BY", x2 + 10, sigTop + 14);
-      text("SUPPLIER'S",  x3 + 10, sigTop + 14);
+      text("PREPARED BY", x2 + 10, sigTop + 14);
+      text("APPROVED BY", x3 + 10, sigTop + 14);
+      text("SUPPLIER'S", x4 + 10, sigTop + 14);
       normal();
 
       const writeSig = (x, showSupervisor, supplier = '') => {
-        const baseY = sigTop + 50;
+        const baseY = sigTop + SIG_H - 20;
         line(x + 10, baseY - 8, x + colW - 10, baseY - 8);
         text("(Signature)", x + 10, baseY - 14);
-        
+
         if (showSupervisor && supervisor) {
           text(supervisor, x + 10, baseY + 2);
         } else if (supplier) {
           text(supplier, x + 10, baseY + 2);
         }
       };
-      
-      writeSig(x1, true, '');
-      writeSig(x2, false, '');
-      writeSig(x3, false, supplierName);
+
+      writeSig(x2, true, '');
+      writeSig(x3, false, '');
+      writeSig(x4, false, supplierName);
 
       setSize(8);
       doc.setTextColor(150, 150, 150);
@@ -1657,10 +1724,10 @@ export default function POasperShade() {
       };
 
       console.log('Saving PO data:', poData);
-      
+
       // Use the working post helper
       const res = await postPOToSheet(APPS_SCRIPT_URL, poData);
-      
+
       if (!res.ok) {
         const msg =
           res.json?.error ||
@@ -1670,10 +1737,10 @@ export default function POasperShade() {
         alert(`Could not save PO.\n${msg}`);
         return { success: false, error: msg };
       }
-      
+
       alert(`PO ${poNumber} saved successfully to Google Sheets ✅`);
       return { success: true, data: res.json };
-      
+
     } catch (error) {
       console.error('Error in savePOToSheet:', error);
       alert('Error saving PO data to Google Sheets: ' + error.message);
@@ -1699,7 +1766,7 @@ export default function POasperShade() {
       // Check cache first
       const cacheKey = `lot_${normalizedLot}`;
       const cachedMatrix = getCached(cacheKey);
-      
+
       if (cachedMatrix) {
         console.log('Using cached lot data');
         setMatrix(cachedMatrix);
@@ -1708,7 +1775,7 @@ export default function POasperShade() {
         setCached(cacheKey, data);
         setMatrix(data);
       }
-      
+
       // Generate new PO Number for each search
       setPoNumber(generatePONumber());
     } catch (err) {
@@ -1756,33 +1823,33 @@ export default function POasperShade() {
     setIssueDate(todayLocalISO());
     setShowIssueDialog(true);
   };
-  
+
   const closeIssueDialog = () => {
     if (confirming) return;
     setShowIssueDialog(false);
   };
 
   const handleConfirmIssue = async () => {
-    if (!norm(supervisor)) { 
-      setDialogError('Supervisor is required.'); 
-      return; 
+    if (!norm(supervisor)) {
+      setDialogError('Supervisor is required.');
+      return;
     }
-    if (!matrix) { 
-      setDialogError('Nothing to submit. Search a lot first.'); 
-      return; 
+    if (!matrix) {
+      setDialogError('Nothing to submit. Search a lot first.');
+      return;
     }
-    
+
     setDialogError('');
     setConfirming(true);
 
     try {
       addSupervisorToOptions(supervisor);
-      
+
       // Save to Google Sheets first
       await savePOToSheet();
-      
+
       // Generate PDF
-      generatePDF(
+      await generatePDF(
         poNumber,
         gstEnabled,
         gstPercentage,
@@ -1791,7 +1858,7 @@ export default function POasperShade() {
         priority,
         supplierName
       );
-      
+
       setShowIssueDialog(false);
     } catch (e) {
       setDialogError(e?.message || 'Failed to generate PDF or save data.');
@@ -2833,7 +2900,7 @@ export default function POasperShade() {
             </h2>
             <p>Version 2.0 • Production</p>
           </div>
-          
+
           <ul className="nav-menu">
             <li className="nav-item">
               <div className="nav-link active">
@@ -2929,13 +2996,13 @@ export default function POasperShade() {
               <div className="gst-section">
                 <div className="gst-toggle">
                   <span style={{ fontWeight: 500 }}>GST</span>
-                  <div 
-                    className="toggle-switch" 
+                  <div
+                    className="toggle-switch"
                     onClick={() => setGstEnabled(!gstEnabled)}
                     title={gstEnabled ? "Disable GST" : "Enable GST"}
                   />
                 </div>
-                
+
                 {gstEnabled && (
                   <>
                     <div className="gst-percentage">
@@ -2951,7 +3018,7 @@ export default function POasperShade() {
                       />
                       <span>%</span>
                     </div>
-                    
+
                     <div className="gst-summary">
                       <span>GST Amount:</span>
                       <span className="gst-amount">₹{gstAmount.toFixed(2)}</span>
@@ -3060,7 +3127,7 @@ export default function POasperShade() {
                     <FiChevronDown />
                   </div>
                 </div>
-                
+
                 {expandedSections.summary && (
                   <div className="section-content">
                     <div className="info-grid">
@@ -3107,7 +3174,7 @@ export default function POasperShade() {
                     <FiChevronDown />
                   </div>
                 </div>
-                
+
                 {expandedSections.details && (
                   <div className="section-content">
                     {/* Bulk Actions */}
@@ -3157,7 +3224,7 @@ export default function POasperShade() {
                           {matrix.rows.map((row, idx) => {
                             const key = `${row.color}-${idx}`;
                             const isRemoved = removedShades[key];
-                            
+
                             return (
                               <tr key={idx} className={isRemoved ? 'removed' : ''}>
                                 <td>
@@ -3225,7 +3292,7 @@ export default function POasperShade() {
                                 <td className="amount">₹{calculateTotalAmount(key)}</td>
                                 <td>
                                   {isRemoved ? (
-                                    <button 
+                                    <button
                                       className="icon-btn success"
                                       onClick={() => handleRestoreShade(key)}
                                       title="Restore"
@@ -3233,7 +3300,7 @@ export default function POasperShade() {
                                       <FiEye />
                                     </button>
                                   ) : (
-                                    <button 
+                                    <button
                                       className="icon-btn danger"
                                       onClick={() => handleRemoveShade(key)}
                                       title="Hide"
