@@ -320,7 +320,7 @@ export default function PoDashboard() {
   return (
     <div className="po-dash-container" id="po-dash-root">
       {/* Header bar */}
-      <header className="po-dash-appbar">
+      <div className="po-dash-appbar">
         <div className="po-dash-appbar-inner">
           <div className="po-dash-logo-section">
             <span className="po-dash-logo-icon" role="img" aria-label="Dashboard Logo">📋</span>
@@ -330,7 +330,7 @@ export default function PoDashboard() {
             ← Home Dashboard
           </button>
         </div>
-      </header>
+      </div>
 
       {/* Page Content wrapper */}
       <main className="po-dash-content">

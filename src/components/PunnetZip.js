@@ -2078,9 +2078,9 @@ const handleConfirmIssue = async () => {
           max-width: 2100px;
           margin: 0 auto;
           padding: 24px 20px 40px;
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          color: #2d3748;
-          background: #ffffffff;
+          font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+          color: #1e293b;
+          background: transparent;
           min-height: 100vh;
         }
 
@@ -2089,12 +2089,12 @@ const handleConfirmIssue = async () => {
           border-radius: 20px;
           padding: 28px;
           margin-bottom: 24px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+          box-shadow: 0 10px 30px rgba(0, 41, 107, 0.03);
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 32px;
           align-items: center;
-          border: 1px solid #f1f5f9;
+          border: 1px solid rgba(0, 63, 136, 0.08);
         }
 
         @media (max-width: 900px) {
@@ -2114,8 +2114,8 @@ const handleConfirmIssue = async () => {
           margin: 0 0 8px 0;
           font-size: 2rem;
           font-weight: 800;
-          color: #1e293b;
-          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          color: #003f88;
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
@@ -2135,10 +2135,10 @@ const handleConfirmIssue = async () => {
           width: 70px;
           height: 70px;
           border-radius: 18px;
-          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
           color: white;
           font-size: 28px;
-          box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+          box-shadow: 0 8px 24px rgba(0, 63, 136, 0.25);
         }
 
         .SearchSection {
@@ -2168,15 +2168,15 @@ const handleConfirmIssue = async () => {
           padding: 16px 20px;
           border-radius: 16px;
           background: #f8fafc;
-          border: 2px solid #e2e8f0;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-          color: #114793ff;
+          border: 1.5px solid #cbd5e1;
+          box-shadow: 0 4px 12px rgba(0, 41, 107, 0.01);
+          color: #003f88;
           transition: all 0.3s ease;
         }
 
         .SearchBox:focus-within {
-          border-color: #8b5cf6;
-          box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1);
+          border-color: #003f88;
+          box-shadow: 0 0 0 4px rgba(0, 63, 136, 0.15), 0 4px 12px rgba(0, 41, 107, 0.05);
           transform: translateY(-2px);
         }
 
@@ -2216,14 +2216,14 @@ const handleConfirmIssue = async () => {
         }
 
         .PrimaryBtn {
-          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
           color: white;
-          box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+          box-shadow: 0 6px 16px rgba(0, 63, 136, 0.25);
         }
 
         .PrimaryBtn:hover:not(:disabled) {
           transform: translateY(-2px);
-          box-shadow: 0 8px 24px rgba(99, 102, 241, 0.5);
+          box-shadow: 0 8px 24px rgba(0, 63, 136, 0.35);
         }
 
         .PrimaryBtn:disabled {
@@ -2234,15 +2234,16 @@ const handleConfirmIssue = async () => {
 
         .GhostBtn {
           background: white;
-          border: 2px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           color: #64748b;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
         }
 
         .GhostBtn:hover {
           background: #f8fafc;
-          border-color: #cbd5e1;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+          border-color: #003f88;
+          color: #003f88;
+          box-shadow: 0 4px 12px rgba(0, 63, 136, 0.08);
           transform: translateY(-1px);
         }
 
@@ -2287,7 +2288,7 @@ const handleConfirmIssue = async () => {
           display: flex;
           align-items: center;
           gap: 12px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
         }
 
         .ContentGrid {
@@ -2306,8 +2307,8 @@ const handleConfirmIssue = async () => {
           background: white;
           border-radius: 20px;
           padding: 28px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-          border: 1px solid #f1f5f9;
+          box-shadow: 0 10px 30px rgba(0, 41, 107, 0.03);
+          border: 1px solid rgba(0, 63, 136, 0.08);
           display: flex;
           flex-direction: column;
           height: fit-content;
@@ -2317,8 +2318,8 @@ const handleConfirmIssue = async () => {
           background: white;
           border-radius: 20px;
           padding: 28px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-          border: 1px solid #f1f5f9;
+          box-shadow: 0 10px 30px rgba(0, 41, 107, 0.03);
+          border: 1px solid rgba(0, 63, 136, 0.08);
           overflow: hidden;
           display: flex;
           flex-direction: column;
@@ -2328,8 +2329,8 @@ const handleConfirmIssue = async () => {
           background: white;
           border-radius: 20px;
           padding: 28px;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-          border: 1px solid #f1f5f9;
+          box-shadow: 0 10px 30px rgba(0, 41, 107, 0.03);
+          border: 1px solid rgba(0, 63, 136, 0.08);
           margin-top: 24px;
         }
 
@@ -2339,14 +2340,14 @@ const handleConfirmIssue = async () => {
           gap: 12px;
           margin-bottom: 24px;
           padding-bottom: 20px;
-          border-bottom: 2px solid #f1f5f9;
+          border-bottom: 2px solid #cbd5e1;
         }
 
         .PanelHeader h3 {
           margin: 0;
           font-size: 1.3rem;
           font-weight: 700;
-          color: #1e293b;
+          color: #003f88;
         }
 
         .InfoGrid {
@@ -2363,13 +2364,14 @@ const handleConfirmIssue = async () => {
           padding: 16px;
           background: #f8fafc;
           border-radius: 14px;
-          border: 1px solid #f1f5f9;
+          border: 1px solid #cbd5e1;
           transition: all 0.2s ease;
         }
 
         .InfoItem:hover {
           background: #f1f5f9;
           transform: translateY(-1px);
+          border-color: #d4af37;
         }
 
         .InfoIcon {
@@ -2379,7 +2381,7 @@ const handleConfirmIssue = async () => {
           width: 48px;
           height: 48px;
           border-radius: 12px;
-          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
           color: white;
           font-size: 1.2rem;
         }
@@ -2403,9 +2405,9 @@ const handleConfirmIssue = async () => {
           gap: 16px;
           margin-bottom: 28px;
           padding: 20px;
-          background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+          background: #f8fafc;
           border-radius: 16px;
-          border: 1px solid #e2e8f0;
+          border: 1px solid #cbd5e1;
         }
 
         .SummaryItem {
@@ -2422,7 +2424,7 @@ const handleConfirmIssue = async () => {
 
         .SummaryValue {
           font-weight: 800;
-          color: #1e293b;
+          color: #003f88;
           font-size: 1.5rem;
         }
 
@@ -2438,6 +2440,7 @@ const handleConfirmIssue = async () => {
           width: 100%;
           overflow: auto;
           border-radius: 12px;
+          border: 1px solid #cbd5e1;
         }
 
         .Table {
@@ -2450,10 +2453,10 @@ const handleConfirmIssue = async () => {
         .Table thead th {
           position: sticky;
           top: 0;
-          background: linear-gradient(135deg, #004f9eff 0%, #0066cc 100%);
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
           text-align: center;
           padding: 16px 18px;
-          border-bottom: 2px solid #e2e8f0;
+          border-bottom: 2px solid #d4af37;
           font-weight: 700;
           color: #fff;
           white-space: nowrap;
@@ -2463,7 +2466,8 @@ const handleConfirmIssue = async () => {
 
         .Table tbody td, .Table tfoot td {
           padding: 14px 16px;
-          border-bottom: 1px solid #f1f5f9;
+          border-bottom: 1px solid #cbd5e1;
+          color: #1e293b;
         }
 
         .Table tbody tr {
@@ -2485,16 +2489,16 @@ const handleConfirmIssue = async () => {
         }
 
         .Table tfoot td {
-          background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+          background: #f8fafc;
           font-weight: 800;
-          color: #1e293b;
+          color: #003f88;
           font-size: 0.95rem;
-          border-top: 2px solid #e2e8f0;
+          border-top: 2px solid #d4af37;
         }
 
         .ZipSelect {
           padding: 8px 12px;
-          border: 1px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           border-radius: 8px;
           background: white;
           color: #1e293b;
@@ -2507,8 +2511,8 @@ const handleConfirmIssue = async () => {
 
         .ZipSelect:focus {
           outline: none;
-          border-color: #8b5cf6;
-          box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+          border-color: #003f88;
+          box-shadow: 0 0 0 3px rgba(0, 63, 136, 0.15);
         }
 
         .ZipSelect:hover {
@@ -2534,13 +2538,14 @@ const handleConfirmIssue = async () => {
           padding: 20px;
           background: #f8fafc;
           border-radius: 12px;
-          border: 1px solid #e2e8f0;
+          border: 1px solid #cbd5e1;
         }
 
         .PlacementSection h4 {
           margin: 0 0 16px 0;
-          color: #475569;
+          color: #003f88;
           font-size: 1rem;
+          font-weight: 700;
         }
 
         .CheckboxGrid {
@@ -2556,20 +2561,20 @@ const handleConfirmIssue = async () => {
           gap: 12px;
           padding: 12px;
           background: white;
-          border: 1px solid #e2e8f0;
+          border: 1px solid #cbd5e1;
           border-radius: 8px;
           cursor: pointer;
           transition: all 0.2s ease;
         }
 
         .CheckboxItem:hover {
-          border-color: #8b5cf6;
-          background: #faf5ff;
+          border-color: #003f88;
+          background: #f8fafc;
         }
 
         .CheckboxItem.selected {
-          border-color: #8b5cf6;
-          background: #f3e8ff;
+          border-color: #003f88;
+          background: rgba(0, 63, 136, 0.05);
         }
 
         .CheckboxIcon {
@@ -2584,8 +2589,8 @@ const handleConfirmIssue = async () => {
         }
 
         .CheckboxItem.selected .CheckboxIcon {
-          background: #8b5cf6;
-          border-color: #8b5cf6;
+          background: #003f88;
+          border-color: #003f88;
           color: white;
         }
 
@@ -2597,22 +2602,23 @@ const handleConfirmIssue = async () => {
         .CostBreakdown {
           margin-top: 20px;
           padding: 20px;
-          background: #f0f9ff;
+          background: #f8fafc;
           border-radius: 12px;
-          border: 1px solid #bae6fd;
+          border: 1px solid #cbd5e1;
         }
 
         .CostBreakdown h4 {
           margin: 0 0 16px 0;
-          color: #0369a1;
+          color: #003f88;
           font-size: 1.1rem;
+          font-weight: 700;
         }
 
         .CostItem {
           display: flex;
           justify-content: space-between;
           padding: 8px 0;
-          border-bottom: 1px solid #e0f2fe;
+          border-bottom: 1px solid #cbd5e1;
         }
 
         .CostItem:last-child {
@@ -2632,17 +2638,17 @@ const handleConfirmIssue = async () => {
         .TotalCost {
           margin-top: 16px;
           padding-top: 16px;
-          border-top: 2px solid #7dd3fc;
+          border-top: 2px solid #d4af37;
           display: flex;
           justify-content: space-between;
           font-size: 1.2rem;
           font-weight: 700;
-          color: #0369a1;
+          color: #003f88;
         }
 
         .PlacementItem {
           background: white;
-          border: 1px solid #e2e8f0;
+          border: 1px solid #cbd5e1;
           border-radius: 8px;
           padding: 16px;
           margin-bottom: 12px;
@@ -2653,6 +2659,8 @@ const handleConfirmIssue = async () => {
           align-items: center;
           gap: 12px;
           margin-bottom: 12px;
+          font-weight: 700;
+          color: #003f88;
         }
 
         .PlacementContent {
@@ -2664,7 +2672,7 @@ const handleConfirmIssue = async () => {
 
         .QuantityInput {
           padding: 8px 12px;
-          border: 1px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           border-radius: 6px;
           font-size: 0.9rem;
           width: 100%;
@@ -2672,13 +2680,13 @@ const handleConfirmIssue = async () => {
 
         .QuantityInput:focus {
           outline: none;
-          border-color: #8b5cf6;
-          box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+          border-color: #003f88;
+          box-shadow: 0 0 0 3px rgba(0, 63, 136, 0.15);
         }
 
         .ZipTypeSelect {
           padding: 8px 12px;
-          border: 1px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           border-radius: 6px;
           font-size: 0.9rem;
           width: 100%;
@@ -2703,8 +2711,8 @@ const handleConfirmIssue = async () => {
           left: 50%;
           transform: translate(-50%, -50%);
           background: white;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2);
+          border: 1px solid rgba(0, 63, 136, 0.08);
+          box-shadow: 0 24px 48px rgba(0, 41, 107, 0.15);
           border-radius: 20px;
           padding: 32px;
           z-index: 1001;
@@ -2724,7 +2732,7 @@ const handleConfirmIssue = async () => {
           margin: 0;
           font-size: 1.6rem;
           font-weight: 700;
-          color: #1e293b;
+          color: #003f88;
           display: flex;
           align-items: center;
           gap: 12px;
@@ -2737,7 +2745,7 @@ const handleConfirmIssue = async () => {
           height: 44px;
           border-radius: 12px;
           background: transparent;
-          border: 1px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           color: #64748b;
           cursor: pointer;
           transition: all 0.2s ease;
@@ -2745,7 +2753,8 @@ const handleConfirmIssue = async () => {
 
         .IconBtn:hover {
           background: #f8fafc;
-          color: #475569;
+          color: #003f88;
+          border-color: #003f88;
           transform: scale(1.05);
         }
 
@@ -2759,7 +2768,7 @@ const handleConfirmIssue = async () => {
           width: 100%;
           padding: 16px 20px;
           border-radius: 14px;
-          border: 2px solid #e2e8f0;
+          border: 1.5px solid #cbd5e1;
           background: white;
           color: #1e293b;
           outline: none;
@@ -2769,8 +2778,8 @@ const handleConfirmIssue = async () => {
         }
 
         .Field input:focus, .Field select:focus {
-          border-color: #8b5cf6;
-          box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15);
+          border-color: #003f88;
+          box-shadow: 0 0 0 4px rgba(0, 63, 136, 0.15);
         }
 
         .FieldLabel {
@@ -2778,7 +2787,7 @@ const handleConfirmIssue = async () => {
           align-items: center;
           gap: 12px;
           font-size: 1.1rem;
-          color: #475569;
+          color: #003f88;
           font-weight: 600;
         }
 

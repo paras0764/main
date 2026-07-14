@@ -1587,7 +1587,7 @@ export default function PurchaseOrderForm({
   return (
     <div className="modern-po">
       <div className="po-container" ref={printableRef}>
-        <header className="po-header">
+        <div className="po-header">
           <div className="header-content">
             <button 
               onClick={handleBackNavigation}
@@ -1599,7 +1599,7 @@ export default function PurchaseOrderForm({
             <h1 className="po-title">Purchase Order</h1>
             <p className="po-subtitle">Create and manage supplier purchase orders with ease</p>
           </div>
-        </header>
+        </div>
         <div className="po-content">
           <div className="content-grid">
             <div className="sidebar">

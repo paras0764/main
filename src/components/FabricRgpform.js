@@ -1020,15 +1020,15 @@ const styles = {
     maxWidth: "2200px",
     margin: "0 auto",
     padding: "24px",
-    fontFamily: "'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
-    backgroundColor: "#ffffff",
+    fontFamily: "'Plus Jakarta Sans', 'Outfit', sans-serif",
+    backgroundColor: "transparent",
     minHeight: "100vh",
   },
   headerWrapper: {
     marginBottom: "28px",
   },
   header: {
-    background: "linear-gradient(135deg, #0f2b3d 0%, #1a4a6f 100%)",
+    background: "linear-gradient(135deg, #003f88 0%, #00296b 100%)",
     borderRadius: "20px",
     padding: "24px 32px",
     display: "flex",
@@ -1036,7 +1036,8 @@ const styles = {
     justifyContent: "space-between",
     flexWrap: "wrap",
     gap: "20px",
-    boxShadow: "0 10px 30px rgba(0, 15, 151, 0.15)",
+    boxShadow: "0 10px 30px rgba(0, 41, 107, 0.15)",
+    border: "1px solid rgba(255, 255, 255, 0.1)",
   },
   headerLeft: {
     display: "flex",
@@ -1056,9 +1057,6 @@ const styles = {
     fontWeight: "600",
     transition: "all 0.2s ease",
     fontFamily: "inherit",
-    "&:hover": {
-      backgroundColor: "rgba(255, 255, 255, 0.25)",
-    },
   },
   logoContainer: {
     display: "flex",
@@ -1092,7 +1090,7 @@ const styles = {
   headerSubtitle: {
     margin: "8px 0 0 0",
     fontSize: "0.95rem",
-    color: "rgba(255, 247, 247, 0.8)",
+    color: "rgba(255, 255, 255, 0.8)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -1120,20 +1118,18 @@ const styles = {
   form: {
     backgroundColor: "white",
     borderRadius: "20px",
-    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.08)",
+    boxShadow: "0 10px 30px rgba(0, 41, 107, 0.03)",
     overflow: "hidden",
+    border: "1px solid rgba(0, 63, 136, 0.08)",
   },
   formBody: {
     display: "grid",
     gridTemplateColumns: "480px 1fr",
     gap: "0",
-    "@media (max-width: 1200px)": {
-      gridTemplateColumns: "1fr",
-    },
   },
   leftColumn: {
     padding: "28px",
-    borderRight: "1px solid #e2e8f0",
+    borderRight: "1px solid #cbd5e1",
     backgroundColor: "#ffffff",
   },
   rightColumn: {
@@ -1142,22 +1138,19 @@ const styles = {
   },
   section: {
     marginBottom: "32px",
-    "&:last-child": {
-      marginBottom: 0,
-    },
   },
   sectionHeader: {
     display: "flex",
     alignItems: "center",
     marginBottom: "20px",
     paddingBottom: "12px",
-    borderBottom: "2px solid #e2e8f0",
+    borderBottom: "2px solid #cbd5e1",
   },
   sectionTitle: {
     margin: 0,
     fontSize: "1.15rem",
     fontWeight: "600",
-    color: "#0f2b3d",
+    color: "#003f88",
     flex: 1,
   },
   requiredBadge: {
@@ -1180,7 +1173,7 @@ const styles = {
   label: {
     marginBottom: "8px",
     fontWeight: "600",
-    color: "#000000",
+    color: "#003f88",
     fontSize: "0.85rem",
     textTransform: "uppercase",
     letterSpacing: "0.3px",
@@ -1191,28 +1184,24 @@ const styles = {
   },
   input: {
     padding: "12px 14px",
-    border: "1.5px solid #e2e8f0",
+    border: "1.5px solid #cbd5e1",
     borderRadius: "10px",
     fontSize: "0.9rem",
     transition: "all 0.2s ease",
     backgroundColor: "white",
     fontFamily: "inherit",
     outline: "none",
-    color: "#000000",
-    "&:focus": {
-      borderColor: "#1a4a6f",
-      boxShadow: "0 0 0 3px rgba(26, 74, 111, 0.1)",
-    },
+    color: "#1e293b",
   },
   inputReadonly: {
     padding: "12px 14px",
-    border: "1.5px solid #e2e8f0",
+    border: "1.5px solid #cbd5e1",
     borderRadius: "10px",
     fontSize: "0.9rem",
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#f8fafc",
     fontFamily: "monospace",
     fontWeight: "600",
-    color: "#000000",
+    color: "#1e293b",
   },
   inputError: {
     borderColor: "#dc2626",
@@ -1225,7 +1214,7 @@ const styles = {
   },
   textarea: {
     padding: "12px 14px",
-    border: "1.5px solid #e2e8f0",
+    border: "1.5px solid #cbd5e1",
     borderRadius: "10px",
     fontSize: "0.9rem",
     resize: "vertical",
@@ -1233,15 +1222,11 @@ const styles = {
     outline: "none",
     width: "100%",
     boxSizing: "border-box",
-    "&:focus": {
-      borderColor: "#1a4a6f",
-      boxShadow: "0 0 0 3px rgba(26, 74, 111, 0.1)",
-    },
   },
   addButton: {
     display: "inline-flex",
     alignItems: "center",
-    backgroundColor: "#1a4a6f",
+    backgroundColor: "#003f88",
     color: "white",
     border: "none",
     padding: "8px 16px",
@@ -1251,9 +1236,6 @@ const styles = {
     cursor: "pointer",
     transition: "all 0.2s ease",
     fontFamily: "inherit",
-    "&:hover": {
-      backgroundColor: "#0f2b3d",
-    },
   },
   itemsContainer: {
     display: "flex",
@@ -1267,12 +1249,9 @@ const styles = {
     backgroundColor: "white",
     borderRadius: "14px",
     padding: "20px",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
-    transition: "box-shadow 0.2s ease",
-    "&:hover": {
-      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.08)",
-    },
+    border: "1px solid #cbd5e1",
+    boxShadow: "0 2px 8px rgba(0, 41, 107, 0.01)",
+    transition: "all 0.2s ease",
   },
   itemHeader: {
     display: "flex",
@@ -1285,8 +1264,8 @@ const styles = {
   itemNumber: {
     fontSize: "0.9rem",
     fontWeight: "700",
-    color: "#1a4a6f",
-    backgroundColor: "#eef2ff",
+    color: "#003f88",
+    backgroundColor: "rgba(0, 63, 136, 0.05)",
     padding: "4px 12px",
     borderRadius: "20px",
   },
@@ -1304,9 +1283,6 @@ const styles = {
     fontWeight: "500",
     transition: "all 0.2s ease",
     fontFamily: "inherit",
-    "&:hover": {
-      backgroundColor: "#fef2f2",
-    },
   },
   itemGrid: {
     display: "grid",
@@ -1320,24 +1296,20 @@ const styles = {
   labelCompact: {
     marginBottom: "6px",
     fontWeight: "500",
-    color: "#000000",
+    color: "#003f88",
     fontSize: "0.9rem",
     textTransform: "uppercase",
     letterSpacing: "0.3px",
   },
   inputCompact: {
     padding: "10px 12px",
-    border: "1.5px solid #e2e8f0",
+    border: "1.5px solid #cbd5e1",
     borderRadius: "8px",
     fontSize: "0.85rem",
     transition: "all 0.2s ease",
     backgroundColor: "white",
     fontFamily: "inherit",
     outline: "none",
-    "&:focus": {
-      borderColor: "#1a4a6f",
-      boxShadow: "0 0 0 2px rgba(26, 74, 111, 0.1)",
-    },
   },
   inputCompactError: {
     borderColor: "#dc2626",
@@ -1351,7 +1323,8 @@ const styles = {
   summaryBar: {
     marginTop: "20px",
     padding: "16px 20px",
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#f8fafc",
+    border: "1px solid #cbd5e1",
     borderRadius: "12px",
     display: "flex",
     alignItems: "center",
@@ -1366,12 +1339,12 @@ const styles = {
   summaryLabel: {
     fontSize: "0.85rem",
     fontWeight: "500",
-    color: "#000000",
+    color: "#64748b",
   },
   summaryValue: {
     fontSize: "1.1rem",
     fontWeight: "700",
-    color: "#000000",
+    color: "#003f88",
   },
   summaryDivider: {
     color: "#cbd5e1",
@@ -1383,7 +1356,7 @@ const styles = {
     alignItems: "center",
     padding: "20px 28px",
     backgroundColor: "#f8fafc",
-    borderTop: "1px solid #e2e8f0",
+    borderTop: "1px solid #cbd5e1",
   },
   actionButtons: {
     display: "flex",
@@ -1391,7 +1364,7 @@ const styles = {
   },
   previewButton: {
     padding: "12px 24px",
-    backgroundColor: "#1a4a6f",
+    backgroundColor: "#003f88",
     color: "white",
     border: "none",
     borderRadius: "12px",
@@ -1402,10 +1375,6 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     fontFamily: "inherit",
-    "&:hover": {
-      backgroundColor: "#0f2b3d",
-      transform: "translateY(-1px)",
-    },
   },
   primaryButton: {
     padding: "12px 28px",
@@ -1421,10 +1390,6 @@ const styles = {
     alignItems: "center",
     fontFamily: "inherit",
     boxShadow: "0 2px 8px rgba(16, 185, 129, 0.3)",
-    "&:hover": {
-      transform: "translateY(-1px)",
-      boxShadow: "0 4px 12px rgba(16, 185, 129, 0.4)",
-    },
   },
   secondaryButton: {
     padding: "12px 24px",
@@ -1439,10 +1404,6 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     fontFamily: "inherit",
-    "&:hover": {
-      backgroundColor: "#f8fafc",
-      borderColor: "#94a3b8",
-    },
   },
 };
 
@@ -1451,16 +1412,24 @@ const styleSheet = document.createElement("style");
 styleSheet.textContent = `
   button:hover {
     transform: translateY(-1px);
+    opacity: 0.95;
   }
   input:focus, select:focus, textarea:focus {
     outline: none;
+    border-color: #003f88 !important;
+    box-shadow: 0 0 0 3px rgba(0, 63, 136, 0.15) !important;
+    transition: all 0.2s ease !important;
+  }
+  .itemCard:hover {
+    border-color: #d4af37 !important;
+    box-shadow: 0 8px 24px rgba(212, 175, 55, 0.1) !important;
   }
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
   ::-webkit-scrollbar-track {
-    background: #f1f5f9;
+    background: #f8fafc;
     border-radius: 10px;
   }
   ::-webkit-scrollbar-thumb {
@@ -1468,7 +1437,7 @@ styleSheet.textContent = `
     border-radius: 10px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+    background: #003f88;
   }
 `;
 document.head.appendChild(styleSheet);

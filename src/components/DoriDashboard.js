@@ -52,6 +52,41 @@ const parseColorBreakdown = (breakdown) => {
   }
 };
 
+const parsePlacements = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return [];
+    
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed;
+        return [parsed];
+      } catch {
+        // fail silent, fallback
+      }
+    }
+    
+    if (trimmed.includes(',')) {
+      return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'string') return [parsed];
+      if (Array.isArray(parsed)) return parsed;
+      return [String(parsed)];
+    } catch {
+      return [trimmed];
+    }
+  }
+  
+  return [String(val)];
+};
+
 // New helper function to calculate aging
 const calculateAging = (timestamp, materialEntryDate) => {
   if (!timestamp) return 0;
@@ -161,7 +196,7 @@ const DoriPurchaseDashboard = () => {
     
     // Extract all unique zip placements
     const allPlacements = data.flatMap(row => {
-      const placements = safeJSONParse(row['Selected Placements'], []);
+      const placements = parsePlacements(row['Selected Placements']);
       return placements;
     }).filter(Boolean);
     
@@ -240,7 +275,7 @@ const DoriPurchaseDashboard = () => {
     // Add zip placement filter
     if (filters.zipPlacement) {
       result = result.filter(row => {
-        const placements = safeJSONParse(row['Selected Placements'], []);
+        const placements = parsePlacements(row['Selected Placements']);
         return placements.some(placement => 
           placement.toLowerCase().includes(filters.zipPlacement.toLowerCase())
         );
@@ -865,7 +900,7 @@ const downloadPDF = () => {
               <tbody>
                 {paginatedData.map((row, index) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + index;
-                  const selectedPlacements = safeJSONParse(row['Selected Placements'], []);
+                  const selectedPlacements = parsePlacements(row['Selected Placements']);
                   
                   return (
                     <tr 
