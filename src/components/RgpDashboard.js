@@ -253,6 +253,21 @@ export default function RgpDashboard({
           progress: 85,
           lastUpdated: "15 min ago"
         },
+        {
+          key: "redownload",
+          title: "Redownload RGP",
+          count: counts.redownload ?? 0,
+          icon: "📥",
+          path: "/rgp/redownload",
+          color: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
+          bgColor: "#f0f9ff",
+          animation: "pulse",
+          badge: "📄",
+          description: "Search and redownload RGP PDF by RGP number",
+          info: "Fetch RGP details from Fabric_RGP and Fabric_RGP_Items sheets by RGP number and generate the exact RGP style PDF.",
+          progress: 100,
+          lastUpdated: "Real-time sync"
+        },
       ],
       purchase: [
         {

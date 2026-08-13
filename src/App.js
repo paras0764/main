@@ -18,6 +18,7 @@ import DoriPurchaseDashboard from "./components/DoriDashboard";
 import POasperShade from "./components/POasperShade";
 import POSummaryReport from "./components/PoSummaryReport";
 import PoDashboard from "./components/PoDashboard";
+import RedownloadRgp from "./components/RedownloadRgp";
 
 // Small wrapper so we can inject navigate as a prop
 function DashboardRoute() {
@@ -43,6 +44,7 @@ export default function App() {
            <Route path="/rgp/overdue" element={<OverdueRgp/>} />
              <Route path="/rgp/details" element={<GatePassRgp/>} />
                <Route path="/rgp/history" element={<RgpHistory/>} />
+                <Route path="/rgp/redownload" element={<RedownloadRgp/>} />
                 <Route path="/rgp/purchase-order" element={<PurchaseOrderForm/>} />
                  <Route path="/rgp/po-as-per-lot" element={<POLot/>} />
                    <Route path="/rgp/puneet-zip-po" element={<PuneetZip/>} />

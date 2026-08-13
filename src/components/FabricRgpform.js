@@ -2,11 +2,11 @@ import { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
 
 // MUST be your deployed /exec URL
-const WEB_APP_URL =
+export const WEB_APP_URL =
   "https://script.google.com/macros/s/AKfycbwAB7EHZu-ztnJhzmY-pY5BMW6EySqsUd8T0Cs18ocMAo9eTWoP6faBqZOCJJ6bIvkqlg/exec";
 
 // Enhanced QR code generation with multiple fallbacks
-const generateQRCode = async (url) => {
+export const generateQRCode = async (url) => {
   const services = [
     `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`,
     `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=300&margin=4`,
@@ -35,7 +35,7 @@ const generateQRCode = async (url) => {
 };
 
 // Convert image URL to data URL with better error handling
-const toDataURL = (src) =>
+export const toDataURL = (src) =>
   new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -101,7 +101,7 @@ const AUTHORIZED_BY_OPTIONS = [
 ];
 
 // Enhanced RGP PDF Generator - With Prepared By & Authorized By
-function generateRgpPDF({ payload, options = {} }) {
+export function generateRgpPDF({ payload, options = {} }) {
   const { qrEntryImage = null, qrReturnImage = null, qrSide = 96 } = options;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   doc.setFont("helvetica", "normal");
