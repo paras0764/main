@@ -341,6 +341,104 @@ function findLotInIndex(indexData, lotNo) {
 
   return null;
 }
+
+// ============================
+// Analyze Existing Orders for Pending Quantities
+// ============================
+async function analyzeExistingOrders(lotNumber, signal) {
+  try {
+    console.log('🔍 Analyzing existing orders for lot:', lotNumber);
+    const range = encodeURIComponent('DoriPurchaseOrders!A1:Z');
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_IDDD}/values/${range}?key=${GOOGLE_API_KEY}`;
+    
+    const response = await fetch(url, { signal });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch purchase orders: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data?.values?.length) {
+      return new Map();
+    }
+
+    const headers = data.values[0].map(norm);
+    
+    // Find column indices
+    const lotNumberIndex = headers.findIndex(h => includes(h, 'lot number') || includes(h, 'lot'));
+    const zipSelectionsIndex = headers.findIndex(h => includes(h, 'dori selections') || includes(h, 'zip selections') || includes(h, 'selections'));
+    const totalPiecesIndex = headers.findIndex(h => includes(h, 'total pieces') || includes(h, 'total pcs') || includes(h, 'total'));
+    const colorBreakdownIndex = headers.findIndex(h => includes(h, 'color breakdown') || includes(h, 'breakdown'));
+    
+    if (lotNumberIndex === -1) {
+      console.warn('Lot Number column not found');
+      return new Map();
+    }
+
+    // Map to store ordered quantities per color
+    const orderedQuantities = new Map();
+
+    for (let i = 1; i < data.values.length; i++) {
+      const row = data.values[i] || [];
+      const rowLotNumber = norm(row[lotNumberIndex]);
+      
+      if (rowLotNumber === norm(lotNumber)) {
+        const totalPieces = totalPiecesIndex !== -1 ? parseInt(norm(row[totalPiecesIndex])) || 0 : 0;
+        const zipSelections = zipSelectionsIndex !== -1 ? row[zipSelectionsIndex] : null;
+        const colorBreakdown = colorBreakdownIndex !== -1 ? row[colorBreakdownIndex] : null;
+        
+        let selectionsObj = {};
+        if (zipSelections && typeof zipSelections === 'string') {
+          try {
+            selectionsObj = JSON.parse(zipSelections);
+          } catch (e) {
+            console.warn('Failed to parse dori selections JSON:', zipSelections);
+          }
+        }
+
+        // Parse color breakdown if available (e.g., "BLACK: 60pcs (Selected - Black); CAMEL: 60pcs (Selected - Coloured)")
+        if (colorBreakdown && typeof colorBreakdown === 'string' && colorBreakdown.trim() !== '') {
+          const colorEntries = colorBreakdown.split(';');
+          colorEntries.forEach(entry => {
+            const match = entry.match(/([^:]+):\s*(\d+)\s*pcs(?:\s*\((?:Selected\s*-\s*)?([^)]+)\))?/i);
+            if (match) {
+              const color = match[1].trim();
+              const pieces = parseInt(match[2]) || 0;
+              const selColor = match[3] ? match[3].trim() : (selectionsObj[color] || null);
+              
+              const existing = orderedQuantities.get(color) || { orderedPieces: 0, zipColor: selColor };
+              existing.orderedPieces += pieces;
+              if (!existing.zipColor && selColor) existing.zipColor = selColor;
+              orderedQuantities.set(color, existing);
+            }
+          });
+        } 
+        // Fallback: Try to get from dori/zip selections JSON
+        else if (Object.keys(selectionsObj).length > 0) {
+          const selectedColors = Object.keys(selectionsObj).filter(color => 
+            selectionsObj[color] && selectionsObj[color] !== ''
+          );
+          
+          if (selectedColors.length > 0) {
+            const piecesPerColor = Math.floor(totalPieces / selectedColors.length);
+            selectedColors.forEach(color => {
+              const existing = orderedQuantities.get(color) || { orderedPieces: 0, zipColor: selectionsObj[color] };
+              existing.orderedPieces += piecesPerColor;
+              existing.zipColor = selectionsObj[color];
+              orderedQuantities.set(color, existing);
+            });
+          }
+        }
+      }
+    }
+
+    console.log('📊 Existing ordered quantities:', Array.from(orderedQuantities.entries()));
+    return orderedQuantities;
+  } catch (error) {
+    console.error('Error analyzing existing orders:', error);
+    return new Map();
+  }
+}
+
 async function fetchExistingPurchaseOrders(lotNumber, signal) {
   try {
     console.log('🔍 Checking existing purchase orders for lot:', lotNumber);
@@ -1018,10 +1116,11 @@ const generateSimpleQR = async (lotNumber) => {
   }
 };
 
-const saveOrderToSheet = async (matrix, formData, totalCost) => {
+const saveOrderToSheet = async (matrix, formData, totalCost, isPendingOrder = false) => {
   try {
-    // Extract blockedShades from formData or use empty Set as fallback
+    // Extract blockedShades and pendingInfo from formData
     const blockedShades = formData.blockedShades || new Set();
+    const pendingInfo = formData.pendingInfo;
     
     // Filter out blocked shades from the submission
     const filteredZipSelections = { ...formData.zipSelections };
@@ -1035,10 +1134,24 @@ const saveOrderToSheet = async (matrix, formData, totalCost) => {
       const filteredRows = matrix.rows.filter(row => {
         const color = row.color || '';
         const zipColor = filteredZipSelections[color] || '';
+        if (isPendingOrder) {
+          const pending = pendingInfo?.get(color);
+          return zipColor && zipColor.trim() !== '' && !blockedShades.has(color) && (pending?.remaining > 0 || !pending);
+        }
         return zipColor && zipColor.trim() !== '' && !blockedShades.has(color);
       });
       
-      selectedShadesTotalPieces = filteredRows.reduce((sum, row) => sum + (row.totalPcs || 0), 0);
+      selectedShadesTotalPieces = filteredRows.reduce((sum, row) => {
+        const color = row.color;
+        let qty = row.totalPcs || 0;
+        if (isPendingOrder) {
+          const pending = pendingInfo?.get(color);
+          if (pending && pending.status === 'partial' && pending.remaining > 0) {
+            qty = pending.remaining;
+          }
+        }
+        return sum + qty;
+      }, 0);
       
       console.log(`📊 Selected ${filteredRows.length} out of ${matrix.rows.length} colors (excluding ${blockedShades.size} blocked shades)`);
     }
@@ -1052,11 +1165,20 @@ const saveOrderToSheet = async (matrix, formData, totalCost) => {
         totals: {
           grand: selectedShadesTotalPieces
         },
-        rows: (matrix.rows || []).map(row => ({
-          color: row.color || '',
-          totalPcs: row.totalPcs || 0,
-          sizes: row.sizes || {}
-        }))
+        rows: (matrix.rows || []).map(row => {
+          let pcs = row.totalPcs || 0;
+          if (isPendingOrder) {
+            const pending = pendingInfo?.get(row.color);
+            if (pending && pending.status === 'partial' && pending.remaining > 0) {
+              pcs = pending.remaining;
+            }
+          }
+          return {
+            color: row.color || '',
+            totalPcs: pcs,
+            sizes: row.sizes || {}
+          };
+        })
       },
       issueDate: formData.issueDate || '',
       supervisor: formData.supervisor || '',
@@ -1071,7 +1193,7 @@ const saveOrderToSheet = async (matrix, formData, totalCost) => {
       blockedShadesCount: blockedShades.size // Send count for tracking
     };
 
-    console.log('📤 Sending zip order data to Google Sheets:', orderData);
+    console.log('📤 Sending dori order data to Google Sheets:', orderData);
 
     const response = await fetch(QR_SYSTEM_URL, {
       method: 'POST',
@@ -1084,7 +1206,7 @@ const saveOrderToSheet = async (matrix, formData, totalCost) => {
     const result = await response.text();
     
     if (result.includes('SUCCESS')) {
-      console.log('✅ Zip order data stored successfully');
+      console.log('✅ Dori order data stored successfully');
       console.log(`📦 Stored ${selectedShadesTotalPieces} pieces (excluding ${blockedShades.size} blocked shades)`);
       return { 
         success: true, 
@@ -1093,12 +1215,12 @@ const saveOrderToSheet = async (matrix, formData, totalCost) => {
         blockedShadesCount: blockedShades.size
       };
     } else {
-      console.error('❌ Failed to store zip order data:', result);
+      console.error('❌ Failed to store dori order data:', result);
       return { success: false, message: result };
     }
     
   } catch (error) {
-    console.error('❌ Network error storing zip order data:', error);
+    console.error('❌ Network error storing dori order data:', error);
     return { success: false, message: error.message };
   }
 };
@@ -1111,9 +1233,9 @@ export default function DoriOrder() {
   const [matrix, setMatrix] = useState(null);
   const [error, setError] = useState('');
   const abortRef = useRef(null);
-  // Add this with other state declarations
-const [priority, setPriority] = useState('Normal');
-// const [blockedShades, setBlockedShades] = useState(new Set());
+  const [priority, setPriority] = useState('Normal');
+  const [blockedShades, setBlockedShades] = useState(new Set());
+  const [pendingInfo, setPendingInfo] = useState(null);
 
   const [showIssueDialog, setShowIssueDialog] = useState(false);
   const [issueDate, setIssueDate] = useState(() => todayLocalISO());
@@ -1133,12 +1255,9 @@ const [priority, setPriority] = useState('Normal');
   // State for garment-zip configuration and placements
   const [garmentZipConfig, setGarmentZipConfig] = useState({});
   const [selectedPlacements, setSelectedPlacements] = useState([]);
-// Keep these states but initialize them differently
-const [placementQuantities, setPlacementQuantities] = useState({});
-const [placementZipTypes, setPlacementZipTypes] = useState({});
+  const [placementQuantities, setPlacementQuantities] = useState({});
+  const [placementZipTypes, setPlacementZipTypes] = useState({});
   const [loadingGarmentConfig, setLoadingGarmentConfig] = useState(false);
-  const [blockedShades, setBlockedShades] = useState(new Set());
-
 
   // ---- Supervisor suggestions (with persistence) ----
   const LS_KEY_SUPERVISORS = 'issueStitching.supervisors';
@@ -1200,84 +1319,107 @@ const [placementZipTypes, setPlacementZipTypes] = useState({});
     return !supervisorOptions.some(opt => (opt || '').toLowerCase() === t);
   }, [supervisor, supervisorOptions]);
 
-  // Optimized search handler
-const handleSearch = async (e) => {
-  e?.preventDefault?.();
-  const normalizedLot = norm(lotInput);
-  if (!normalizedLot || loading) return;
-
-  setError('');
-  setMatrix(null);
-  setBlockedShades(new Set()); // Reset blocked shades
-  setLoading(true);
-
-  abortRef.current?.abort?.();
-  const ctrl = new AbortController();
-  abortRef.current = ctrl;
-
-  try {
-    // Check cache first
-    const cacheKey = `lot_${normalizedLot}`;
-    const cachedMatrix = getCached(cacheKey);
+  const initializeWithPendingDetection = async (matrixData, signal) => {
+    const zipSelectionsTemp = {};
+    const blockedShadesTemp = new Set();
+    const pendingInfoTemp = new Map();
     
-    if (cachedMatrix) {
-      console.log('Using cached lot data');
-      setMatrix(cachedMatrix);
-      await initializeZipSelections(cachedMatrix, ctrl.signal);
-    } else {
-      const data = await fetchLotMatrixViaSheetsApi(normalizedLot, ctrl.signal);
-      setCached(cacheKey, data);
-      setMatrix(data);
-      await initializeZipSelections(data, ctrl.signal);
-    }
-  } catch (err) {
-    if (err.name !== 'AbortError') {
-      setError(err?.message || "Failed to fetch data.");
-    }
-  } finally {
-    setLoading(false);
-  }
-};
-const initializeZipSelections = async (matrixData, signal) => {
-  const initialSelections = {};
-  const blockedShades = new Set();
-  
-  // Check for existing purchase orders
-  const existingOrders = await fetchExistingPurchaseOrders(matrixData.lotNumber, signal);
-  
-  if (existingOrders) {
-    // Collect all blocked shades from existing orders
-    existingOrders.forEach(order => {
-      Object.entries(order).forEach(([color, selection]) => {
-        // If selection is not empty, block this shade
-        if (selection && selection.trim() !== '') {
-          blockedShades.add(color);
+    const existingOrders = await analyzeExistingOrders(matrixData.lotNumber, signal);
+    
+    matrixData.rows.forEach(row => {
+      const color = row.color;
+      const currentCuttingQty = row.totalPcs || 0;
+      const existingOrder = existingOrders.get(color);
+      
+      if (existingOrder) {
+        const orderedQty = existingOrder.orderedPieces;
+        const remainingQty = currentCuttingQty - orderedQty;
+        
+        if (remainingQty <= 0) {
+          blockedShadesTemp.add(color);
+          zipSelectionsTemp[color] = 'BLOCKED';
+          pendingInfoTemp.set(color, {
+            status: 'completed',
+            ordered: orderedQty,
+            remaining: 0,
+            total: currentCuttingQty,
+            zipColor: existingOrder.zipColor,
+            canOrder: false
+          });
+        } else {
+          zipSelectionsTemp[color] = existingOrder.zipColor || '';
+          pendingInfoTemp.set(color, {
+            status: 'partial',
+            ordered: orderedQty,
+            remaining: remainingQty,
+            total: currentCuttingQty,
+            zipColor: existingOrder.zipColor,
+            canOrder: true,
+            isPending: true
+          });
         }
-      });
+      } else {
+        zipSelectionsTemp[color] = '';
+        pendingInfoTemp.set(color, {
+          status: 'available',
+          ordered: 0,
+          remaining: currentCuttingQty,
+          total: currentCuttingQty,
+          zipColor: null,
+          canOrder: true,
+          isPending: false
+        });
+      }
     });
-  }
+    
+    return { zipSelections: zipSelectionsTemp, blockedShades: blockedShadesTemp, pendingInfo: pendingInfoTemp };
+  };
 
-  // Initialize selections, blocking shades that already have orders
-  matrixData.rows.forEach(row => {
-    const color = row.color;
-    if (blockedShades.has(color)) {
-      // This shade is blocked (already has an order)
-      initialSelections[color] = 'BLOCKED';
-    } else {
-      // This shade is available for new order
-      initialSelections[color] = '';
+  // Optimized search handler
+  const handleSearch = async (e) => {
+    e?.preventDefault?.();
+    const normalizedLot = norm(lotInput);
+    if (!normalizedLot || loading) return;
+
+    setError('');
+    setMatrix(null);
+    setBlockedShades(new Set());
+    setPendingInfo(null);
+    setZipSelections({});
+    setLoading(true);
+
+    abortRef.current?.abort?.();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    try {
+      const cacheKey = `lot_${normalizedLot}`;
+      const cachedMatrix = getCached(cacheKey);
+      
+      if (cachedMatrix) {
+        console.log('Using cached lot data');
+        setMatrix(cachedMatrix);
+        const { zipSelections: selections, blockedShades: blocked, pendingInfo: pending } = await initializeWithPendingDetection(cachedMatrix, ctrl.signal);
+        setZipSelections(selections || {});
+        setBlockedShades(blocked || new Set());
+        setPendingInfo(pending || new Map());
+      } else {
+        const data = await fetchLotMatrixViaSheetsApi(normalizedLot, ctrl.signal);
+        setCached(cacheKey, data);
+        setMatrix(data);
+        const { zipSelections: selections, blockedShades: blocked, pendingInfo: pending } = await initializeWithPendingDetection(data, ctrl.signal);
+        setZipSelections(selections || {});
+        setBlockedShades(blocked || new Set());
+        setPendingInfo(pending || new Map());
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setError(err?.message || "Failed to fetch data.");
+      }
+    } finally {
+      setLoading(false);
     }
-  });
-  
-  setZipSelections(initialSelections);
-  
-  // Store blocked shades for UI display
-  setBlockedShades(blockedShades);
-  
-  // Initialize with default values
-  setPlacementQuantities({ default: 1 });
-  setPlacementZipTypes({ default: availableZipTypes[0] || '' });
-};
+  };
 
   const handleClear = () => {
     setLotInput('');
@@ -1287,6 +1429,8 @@ const initializeZipSelections = async (matrixData, signal) => {
     setSelectedPlacements([]);
     setPlacementQuantities({});
     setPlacementZipTypes({});
+    setBlockedShades(new Set());
+    setPendingInfo(null);
     abortRef.current?.abort?.();
   };
 
@@ -1296,17 +1440,17 @@ const initializeZipSelections = async (matrixData, signal) => {
   };
 
   const handleZipChange = (color, value) => {
-  // Check if this shade is blocked
-  if (blockedShades.has(color)) {
-    alert(`This shade (${color}) already has a purchase order and cannot be modified.`);
-    return;
-  }
-  
-  setZipSelections(prev => ({
-    ...prev,
-    [color]: value
-  }));
-};
+    if (blockedShades.has(color)) {
+      alert(`This shade (${color}) already has a purchase order and cannot be modified.`);
+      return;
+    }
+    
+    setZipSelections(prev => ({
+      ...prev,
+      [color]: value
+    }));
+  };
+
   // Memoized calculations
   const availableZipTypes = useMemo(() => {
     const types = [...new Set(zipQualityData.map(item => item.type))];
@@ -1330,30 +1474,34 @@ const initializeZipSelections = async (matrixData, signal) => {
     return item ? item.price : 0;
   };
 
-const totalCost = useMemo(() => {
-  if (!matrix || selectedPlacements.length === 0) return 0;
+  const totalCost = useMemo(() => {
+    if (!matrix || selectedPlacements.length === 0) return 0;
 
-  let total = 0;
-  
-  selectedPlacements.forEach(placement => {
-    const quantity = placementQuantities[placement] || 1;
-    const zipType = placementZipTypes[placement];
+    let total = 0;
     
-    if (zipType) {
-      matrix.rows.forEach(row => {
-        const color = row.color;
-        const zipColor = zipSelections[color];
-        if (zipColor && zipColor.trim() !== '' && !blockedShades.has(color)) {
-          const price = getZipPrice(zipType, zipColor);
-          const pieces = row.totalPcs || 0;
-          total += (price * pieces) * quantity;
-        }
-      });
-    }
-  });
+    selectedPlacements.forEach(placement => {
+      const quantity = placementQuantities[placement] || 1;
+      const zipType = placementZipTypes[placement];
+      
+      if (zipType) {
+        matrix.rows.forEach(row => {
+          const color = row.color;
+          const zipColor = zipSelections[color];
+          if (zipColor && zipColor.trim() !== '' && !blockedShades.has(color)) {
+            const price = getZipPrice(zipType, zipColor);
+            let pieces = row.totalPcs || 0;
+            const pending = pendingInfo?.get(color);
+            if (pending?.status === 'partial' && pending.remaining > 0) {
+              pieces = pending.remaining;
+            }
+            total += (price * pieces) * quantity;
+          }
+        });
+      }
+    });
 
-  return total;
-}, [placementQuantities, placementZipTypes, selectedPlacements, matrix, zipSelections, blockedShades]);
+    return total;
+  }, [placementQuantities, placementZipTypes, selectedPlacements, matrix, zipSelections, blockedShades, pendingInfo]);
 
   // Toggle zip placement selection
 const togglePlacement = (placement) => {
@@ -1489,7 +1637,10 @@ const generateIssuePdf = async (matrix, {
   placementQuantities,
   placementZipTypes,
   zipQualityData,
-  blockedShades 
+  blockedShades,
+  pendingInfo,
+  isPendingOrder = false,
+  consignee = ''
 }) => {
   if (!matrix) return;
 
@@ -1556,6 +1707,15 @@ const generateIssuePdf = async (matrix, {
     }
   };
 
+  const getActualQuantity = (color, originalQty) => {
+    if (!isPendingOrder) return originalQty;
+    const pending = pendingInfo?.get(color);
+    if (pending && pending.status === 'partial' && pending.remaining > 0) {
+      return pending.remaining;
+    }
+    return originalQty;
+  };
+
   // Generate simple QR codes for your AppScript
   const qrCodes = await generateSimpleQR(matrix.lotNumber);
   
@@ -1577,12 +1737,22 @@ const generateIssuePdf = async (matrix, {
   const selectedRows = matrix.rows.filter(row => {
     const color = row.color || '';
     const zipColor = zipSelections[color] || '';
+    if (isPendingOrder) {
+      const pending = pendingInfo?.get(color);
+      return zipColor && zipColor.trim() !== '' && 
+             !blockedShades.has(color) && 
+             pending?.remaining > 0;
+    }
     return zipColor && zipColor.trim() !== '' && !blockedShades.has(color);
   });
 
-  const selectedTotalPieces = selectedRows.reduce((sum, row) => sum + (row.totalPcs || 0), 0);
+  const selectedTotalPieces = selectedRows.reduce((sum, row) => {
+    const color = row.color;
+    const qty = getActualQuantity(color, row.totalPcs);
+    return sum + (qty || 0);
+  }, 0);
   
-  console.log(`📊 PDF: Showing ${selectedTotalPieces} selected pieces instead of ${matrix.totals.grand} total pieces`);
+  console.log(`📊 PDF: Showing ${selectedTotalPieces} ${isPendingOrder ? 'pending' : 'selected'} pieces instead of ${matrix.totals.grand} total pieces`);
 
   const doc = new jsPDF({ unit: 'pt', format: 'A4' });
   const W = doc.internal.pageSize.getWidth();
@@ -1642,16 +1812,24 @@ const generateIssuePdf = async (matrix, {
 
     const headerTitleY = boxY + 20; 
     
+    if (isPendingOrder) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(220, 38, 38);
+      doc.text('PENDING QUANTITY ORDER', centerPoint, headerTitleY - 8, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+    }
+    
     doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
-    doc.text('PURCHASE ORDER', centerPoint, headerTitleY, { align: 'center' });
+    doc.text('PURCHASE ORDER', centerPoint, headerTitleY + (isPendingOrder ? 10 : 0), { align: 'center' });
     
     doc.setFontSize(14);
-    doc.text('DORI MATERIAL REQUIREMENT', centerPoint, headerTitleY + 20, { align: 'center' }); 
+    doc.text('DORI MATERIAL REQUIREMENT', centerPoint, headerTitleY + (isPendingOrder ? 28 : 20), { align: 'center' }); 
 
     const lotNumberText = cleanString(matrix.lotNumber || 'LOT NO. UNKNOWN');
     doc.setFont('helvetica', 'bold'); 
     doc.setFontSize(18);
-    doc.text(`LOT NO: ${lotNumberText}`, centerPoint, headerTitleY + 45, { align: 'center' });
+    doc.text(`LOT NO: ${lotNumberText}`, centerPoint, headerTitleY + (isPendingOrder ? 50 : 45), { align: 'center' });
 
     const fieldsY = boxY + boxSize + 15;
     const fieldH = 20;
@@ -1677,10 +1855,10 @@ const generateIssuePdf = async (matrix, {
     
     doc.rect(pcsPriorityX, fieldsY + fieldH, dateItemW, fieldH);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text('TOTAL PCS', pcsPriorityX + 4, fieldsY + fieldH + 12);
+    doc.text(isPendingOrder ? 'PENDING PCS' : 'TOTAL PCS', pcsPriorityX + 4, fieldsY + fieldH + 12);
     doc.setFont('helvetica', 'normal');
     // Show selected pieces instead of complete lot total
-    doc.text(selectedTotalPieces.toString(), pcsPriorityX + 60, fieldsY + fieldH + 12);
+    doc.text(selectedTotalPieces.toString(), pcsPriorityX + 65, fieldsY + fieldH + 12);
 
     doc.rect(pcsPriorityX + dateItemW, fieldsY + fieldH, dateItemW, fieldH);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
@@ -1840,7 +2018,7 @@ const generateIssuePdf = async (matrix, {
           const zipColor = zipSelections[color];
           if (zipColor) {
             const price = getZipPricePdf(zipType, zipColor);
-            const quantity = parseInt(row.totalPcs) || 0;
+            const quantity = getActualQuantity(color, row.totalPcs);
             const requiredQuantity = quantity * placementQuantity; 
             const rowTotal = price * requiredQuantity;
             totalZipCost += rowTotal;
@@ -2028,7 +2206,7 @@ const generateIssuePdf = async (matrix, {
   drawFooterWithSignatures();
   drawSimpleFooter(currentPage, pageCount);
 
-  const fname = `Lot_${cleanString(matrix.lotNumber || 'Unknown')}_Purchase_Order_${filenameDatePart(issueDate)}.pdf`;
+  const fname = `Lot_${cleanString(matrix.lotNumber || 'Unknown')}_${isPendingOrder ? 'PENDING_' : ''}Purchase_Order_${filenameDatePart(issueDate)}.pdf`;
   doc.save(fname);
 
   // Save order data to Google Sheets
@@ -2043,9 +2221,11 @@ const generateIssuePdf = async (matrix, {
       placementQuantities,
       placementZipTypes,
       zipQualityData,
-      blockedShades
+      blockedShades,
+      pendingInfo
     },
-    totalZipCost
+    totalZipCost,
+    isPendingOrder
   );
   
   return {
@@ -2055,8 +2235,85 @@ const generateIssuePdf = async (matrix, {
     message: saveResult.message,
     pendingData: pendingData,
     selectedPieces: selectedTotalPieces,
-    totalPieces: matrix.totals.grand
+    totalPieces: matrix.totals.grand,
+    isPendingOrder: isPendingOrder
   };
+};
+
+const generatePendingOrder = async () => {
+  setDialogError('');
+  setConfirming(true);
+
+  try {
+    addSupervisorToOptions(supervisor);
+
+    const result = await generateIssuePdf(matrix, { 
+      issueDate, 
+      supervisor, 
+      priority,
+      zipSelections,
+      selectedPlacements,
+      placementQuantities,
+      placementZipTypes,
+      zipQualityData,
+      blockedShades,
+      pendingInfo,
+      isPendingOrder: true
+    });
+
+    setShowIssueDialog(false);
+    
+    if (result.success) {
+      alert(`✅ PENDING ORDER created successfully!\n\n` +
+            `Order Type: Additional/Remaining Quantity\n` +
+            `Quantity: ${result.selectedPieces} pieces\n\n` +
+            `PDF has been saved and data stored in sheet.`);
+    } else {
+      alert('PDF generated but data saving failed: ' + result.message);
+    }
+    
+  } catch (e) {
+    setDialogError(e?.message || 'Failed to generate PDF.');
+  } finally {
+    setConfirming(false);
+  }
+};
+
+const generateFullOrder = async () => {
+  setDialogError('');
+  setConfirming(true);
+
+  try {
+    addSupervisorToOptions(supervisor);
+
+    const result = await generateIssuePdf(matrix, { 
+      issueDate, 
+      supervisor, 
+      priority,
+      zipSelections,
+      selectedPlacements,
+      placementQuantities,
+      placementZipTypes,
+      zipQualityData,
+      blockedShades,
+      pendingInfo,
+      isPendingOrder: false
+    });
+
+    setShowIssueDialog(false);
+    
+    if (result.success) {
+      alert(`✅ NEW ORDER created successfully!\n\n` +
+            `Quantity: ${result.selectedPieces} pieces`);
+    } else {
+      alert('PDF generated but data saving failed: ' + result.message);
+    }
+    
+  } catch (e) {
+    setDialogError(e?.message || 'Failed to generate PDF.');
+  } finally {
+    setConfirming(false);
+  }
 };
 
 const handleConfirmIssue = async () => {
@@ -2069,51 +2326,35 @@ const handleConfirmIssue = async () => {
     return; 
   }
   
-  setDialogError('');
-  setConfirming(true);
-
-  try {
-    addSupervisorToOptions(supervisor);
-
-    // Generate PDF with selected shades data
-    const result = await generateIssuePdf(matrix, { 
-      issueDate, 
-      supervisor, 
-      priority,
-      zipSelections,
-      selectedPlacements,
-      placementQuantities,
-      placementZipTypes,
-      zipQualityData,
-      blockedShades // Add blockedShades here
-    });
-
-    setShowIssueDialog(false);
+  // Add safety check for zipSelections
+  if (!zipSelections || typeof zipSelections !== 'object') {
+    setDialogError('Dori selections not initialized. Please try searching the lot again.');
+    return;
+  }
+  
+  const hasPendingSelections = Object.entries(zipSelections).some(([color, selection]) => {
+    const pending = pendingInfo?.get(color);
+    return selection && selection.trim() !== '' && 
+           pending?.status === 'partial' && 
+           pending.remaining > 0;
+  });
+  
+  if (hasPendingSelections) {
+    const userChoice = window.confirm(
+      '⚠️ Some selected shades already have existing orders!\n\n' +
+      'Would you like to:\n' +
+      '• Click OK to create a PENDING ORDER for the REMAINING quantities only\n' +
+      '• Click Cancel to create a NEW ORDER for FULL quantities (duplicate)\n\n' +
+      'Note: Creating a pending order will only order the remaining pieces.'
+    );
     
-    if (result.success) {
-      // Calculate selected pieces for the success message (excluding blocked shades)
-      const selectedCount = Object.entries(zipSelections)
-        .filter(([color, selection]) => 
-          selection && selection.trim() !== '' && !blockedShades.has(color)
-        ).length;
-      
-      const selectedPieces = matrix.rows
-        .filter(row => 
-          zipSelections[row.color] && 
-          zipSelections[row.color].trim() !== '' && 
-          !blockedShades.has(row.color)
-        )
-        .reduce((sum, row) => sum + (row.totalPcs || 0), 0);
-      
-      alert(`PDF generated successfully! Stored ${selectedPieces} pieces (${selectedCount} selected shades) instead of complete lot. ${blockedShades.size > 0 ? `${blockedShades.size} shades were blocked due to existing orders.` : ''}`);
+    if (userChoice) {
+      await generatePendingOrder();
     } else {
-      alert('PDF generated but data saving failed: ' + result.message);
+      await generateFullOrder();
     }
-    
-  } catch (e) {
-    setDialogError(e?.message || 'Failed to generate PDF.');
-  } finally {
-    setConfirming(false);
+  } else {
+    await generateFullOrder();
   }
 };
 
@@ -3072,49 +3313,80 @@ const handleConfirmIssue = async () => {
                     <tr>{columns.map((c, i) => <th key={`${c || 'blank'}-${i}`}>{c || '\u00A0'}</th>)}</tr>
                   </thead>
                   <tbody>
-                    {matrix.rows.map((r, idx) => (
-  <tr key={idx} className={blockedShades.has(r.color) ? 'blocked-row' : ''}>
-    <td>
-      {r.color}
-      {blockedShades.has(r.color) && (
-        <span style={{ marginLeft: '8px', color: '#ef4444', fontSize: '0.8rem' }}>
-          <FiLock /> Ordered
-        </span>
-      )}
-    </td>
-    <td className="num">{r.cuttingTable ?? ''}</td>
-    {matrix.sizes.map((s) => (
-      <td key={s} className="num">{r.sizes?.[s] ?? ''}</td>
-    ))}
-    <td className="num strong">{r.totalPcs ?? ''}</td>
-    <td>
-      {blockedShades.has(r.color) ? (
-        <div style={{ 
-          padding: '8px 12px', 
-          backgroundColor: '#fef2f2', 
-          border: '1px solid #fecaca',
-          borderRadius: '8px',
-          color: '#dc2626',
-          fontSize: '0.9rem',
-          textAlign: 'center'
-        }}>
-          <FiLock /> Already Ordered
-        </div>
-      ) : (
-        <select 
-          className="ZipSelect"
-          value={zipSelections[r.color] || ''}
-          onChange={(e) => handleZipChange(r.color, e.target.value)}
-          disabled={blockedShades.has(r.color)}
-        >
-          <option value="">Select Color</option>
-          <option value="Coloured">Coloured</option>
-          <option value="Black">Black</option>
-        </select>
-      )}
-    </td>
-  </tr>
-))}
+                    {matrix.rows.map((r, idx) => {
+                      const pending = pendingInfo?.get(r.color);
+                      return (
+                        <tr key={idx} className={blockedShades.has(r.color) ? 'blocked-row' : ''}>
+                          <td>
+                            {r.color}
+                            {blockedShades.has(r.color) && (
+                              <span style={{ marginLeft: '8px', color: '#ef4444', fontSize: '0.8rem' }}>
+                                <FiLock /> Fully Ordered
+                              </span>
+                            )}
+                            {pending?.status === 'partial' && (
+                              <span style={{ marginLeft: '8px', color: '#f59e0b', fontSize: '0.7rem' }}>
+                                (Pending: {pending.remaining}pcs)
+                              </span>
+                            )}
+                          </td>
+                          <td className="num">{r.cuttingTable ?? ''}</td>
+                          {matrix.sizes.map((s) => (
+                            <td key={s} className="num">{r.sizes?.[s] ?? ''}</td>
+                          ))}
+                          <td className="num strong">{r.totalPcs ?? ''}</td>
+                          <td>
+                            {blockedShades.has(r.color) ? (
+                              <div style={{ 
+                                padding: '8px 12px', 
+                                backgroundColor: '#fef2f2', 
+                                border: '1px solid #fecaca',
+                                borderRadius: '8px',
+                                color: '#dc2626',
+                                fontSize: '0.9rem',
+                                textAlign: 'center'
+                              }}>
+                                <FiLock /> Ordered
+                              </div>
+                            ) : pending?.status === 'partial' ? (
+                              <div>
+                                <select 
+                                  className="ZipSelect"
+                                  value={zipSelections[r.color] || ''}
+                                  onChange={(e) => handleZipChange(r.color, e.target.value)}
+                                  style={{ marginBottom: '8px' }}
+                                >
+                                  <option value="">Select Color</option>
+                                  <option value="Coloured">Coloured</option>
+                                  <option value="Black">Black</option>
+                                </select>
+                                <div style={{ 
+                                  fontSize: '0.7rem', 
+                                  color: '#f59e0b',
+                                  marginTop: '4px',
+                                  padding: '4px 6px',
+                                  backgroundColor: '#fef3c7',
+                                  borderRadius: '4px'
+                                }}>
+                                  Ordered: {pending.ordered} pcs<br/>
+                                  Remaining: {pending.remaining} pcs
+                                </div>
+                              </div>
+                            ) : (
+                              <select 
+                                className="ZipSelect"
+                                value={zipSelections[r.color] || ''}
+                                onChange={(e) => handleZipChange(r.color, e.target.value)}
+                              >
+                                <option value="">Select Color</option>
+                                <option value="Coloured">Coloured</option>
+                                <option value="Black">Black</option>
+                              </select>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr>
@@ -3257,158 +3529,123 @@ const handleConfirmIssue = async () => {
                   <div className="CostBreakdown">
                     <h4>Cost Breakdown</h4>
                     
-                  {selectedPlacements.length > 0 && (
-  <div className="CostBreakdown">
-    <h4>Cost Breakdown</h4>
-    
-    {selectedPlacements.map(placement => {
-      const quantity = placementQuantities[placement] || 1;
-      const zipType = placementZipTypes[placement];
-      
-      if (!zipType) {
-        return (
-          <div key={placement} style={{ marginBottom: '16px', padding: '12px', background: '#fef3c7', borderRadius: '8px' }}>
-            <p style={{ fontWeight: 'bold', color: '#92400e', margin: 0 }}>
-              {placement}: Please select a dori type
-            </p>
-          </div>
-        );
-      }
+                    {selectedPlacements.map(placement => {
+                      const quantity = placementQuantities[placement] || 1;
+                      const zipType = placementZipTypes[placement];
+                      
+                      if (!zipType) {
+                        return (
+                          <div key={placement} style={{ marginBottom: '16px', padding: '12px', background: '#fef3c7', borderRadius: '8px' }}>
+                            <p style={{ fontWeight: 'bold', color: '#92400e', margin: 0 }}>
+                              {placement}: Please select a dori type
+                            </p>
+                          </div>
+                        );
+                      }
 
-      let placementSubtotal = 0;
-      const costItems = [];
+                      let placementSubtotal = 0;
+                      const costItems = [];
 
-      // Calculate costs for this placement
-      matrix.rows.forEach((row) => {
-        const color = row.color;
-        
-        // Skip blocked shades and empty selections
-        if (blockedShades.has(color)) return;
-        
-        const zipColor = zipSelections[color];
-        if (zipColor && zipColor.trim() !== '') {
-          const price = getZipPrice(zipType, zipColor);
-          const pieces = row.totalPcs || 0;
-          
-          if (price > 0 && pieces > 0) {
-            const itemTotal = (price * pieces) * quantity;
-            placementSubtotal += itemTotal;
-            
-            costItems.push(
-              <div key={`${placement}-${color}`} className="CostItem">
-                <span className="CostLabel">{color} ({zipColor})</span>
-                <span className="CostValue">
-                  {pieces} pcs × {quantity} per piece × ₹{price} = ₹{itemTotal}
-                </span>
-              </div>
-            );
-          }
-        }
-      });
+                      // Calculate costs for this placement
+                      matrix.rows.forEach((row) => {
+                        const color = row.color;
+                        
+                        // Skip blocked shades and empty selections
+                        if (blockedShades.has(color)) return;
+                        
+                        const zipColor = zipSelections[color];
+                        if (zipColor && zipColor.trim() !== '') {
+                          const price = getZipPrice(zipType, zipColor);
+                          let pieces = row.totalPcs || 0;
+                          const pending = pendingInfo?.get(color);
+                          if (pending?.status === 'partial' && pending.remaining > 0) {
+                            pieces = pending.remaining;
+                          }
+                          
+                          if (price > 0 && pieces > 0) {
+                            const itemTotal = (price * pieces) * quantity;
+                            placementSubtotal += itemTotal;
+                            
+                            costItems.push(
+                              <div key={`${placement}-${color}`} className="CostItem">
+                                <span className="CostLabel">{color} ({zipColor})</span>
+                                <span className="CostValue">
+                                  {pieces} pcs × {quantity} per piece × ₹{price} = ₹{itemTotal}
+                                </span>
+                              </div>
+                            );
+                          }
+                        }
+                      });
 
-      return (
-        <div key={placement} style={{ marginBottom: '24px' }}>
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center',
-            marginBottom: '12px',
-            padding: '12px',
-            background: '#f8fafc',
-            borderRadius: '8px',
-            border: '1px solid #e2e8f0'
-          }}>
-            <span style={{ fontWeight: 'bold', color: '#475569', fontSize: '1rem' }}>
-              {placement}
-            </span>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.9rem', color: '#64748b' }}>
-                {quantity} per piece • {zipType}
-              </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#059669' }}>
-                Subtotal: ₹{placementSubtotal}
-              </div>
-            </div>
-          </div>
-          
-          {costItems.length > 0 ? (
-            <div style={{ marginLeft: '16px' }}>
-              {costItems}
-            </div>
-          ) : (
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '16px', 
-              color: '#64748b',
-              fontStyle: 'italic',
-              background: '#f8fafc',
-              borderRadius: '8px',
-              marginLeft: '16px'
-            }}>
-              No dori requirements specified for this placement
-            </div>
-          )}
-        </div>
-      );
-    }).filter(Boolean)}
+                      return (
+                        <div key={placement} style={{ marginBottom: '24px' }}>
+                          <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            marginBottom: '12px',
+                            padding: '12px',
+                            background: '#f8fafc',
+                            borderRadius: '8px',
+                            border: '1px solid #e2e8f0'
+                          }}>
+                            <span style={{ fontWeight: 'bold', color: '#475569', fontSize: '1rem' }}>
+                              {placement}
+                            </span>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '0.9rem', color: '#64748b' }}>
+                                {quantity} per piece • {zipType}
+                              </div>
+                              <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#059669' }}>
+                                Subtotal: ₹{placementSubtotal}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {costItems.length > 0 ? (
+                            <div style={{ marginLeft: '16px' }}>
+                              {costItems}
+                            </div>
+                          ) : (
+                            <div style={{ 
+                              textAlign: 'center', 
+                              padding: '16px', 
+                              color: '#64748b',
+                              fontStyle: 'italic',
+                              background: '#f8fafc',
+                              borderRadius: '8px',
+                              marginLeft: '16px'
+                            }}>
+                              No dori requirements specified for this placement
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
 
-    {/* Grand Total */}
-    {totalCost > 0 ? (
-      <div className="TotalCost">
-        <span>Grand Total Cost:</span>
-        <span>₹{totalCost}</span>
-      </div>
-    ) : (
-      <div style={{ 
-        textAlign: 'center', 
-        padding: '20px', 
-        color: '#64748b',
-        background: '#f8fafc',
-        borderRadius: '8px',
-        marginTop: '16px'
-      }}>
-        No dori costs calculated. Please ensure:
-        <ul style={{ textAlign: 'left', margin: '12px 0', paddingLeft: '20px' }}>
-          <li>Dori types are selected for each placement</li>
-          <li>Dori colors are selected in the cutting matrix</li>
-          <li>Shades are not blocked by existing orders</li>
-        </ul>
-      </div>
-    )}
-
-    {/* Debug Information - Remove this after testing */}
-    {process.env.NODE_ENV === 'development' && (
-      <div style={{ 
-        background: '#f3f4f6', 
-        padding: '16px', 
-        borderRadius: '8px', 
-        marginTop: '16px',
-        fontSize: '12px',
-        fontFamily: 'monospace',
-        border: '1px dashed #d1d5db'
-      }}>
-        <h5 style={{ margin: '0 0 8px 0', color: '#374151' }}>Debug Info:</h5>
-        <div>Selected Placements: {JSON.stringify(selectedPlacements)}</div>
-        <div>Placement Quantities: {JSON.stringify(placementQuantities)}</div>
-        <div>Placement Zip Types: {JSON.stringify(placementZipTypes)}</div>
-        <div>Blocked Shades: {Array.from(blockedShades).join(', ') || 'None'}</div>
-        <div>Available Zip Types: {availableZipTypes.join(', ')}</div>
-        <div>Total Cost: ₹{totalCost}</div>
-        <div>Zip Selections Count: {Object.values(zipSelections).filter(val => val && val.trim() !== '').length}</div>
-      </div>
-    )}
-  </div>
-)}
-                    
+                    {/* Grand Total */}
                     {totalCost > 0 ? (
                       <div className="TotalCost">
-                        <span>Total Cost:</span>
+                        <span>Grand Total Cost:</span>
                         <span>₹{totalCost}</span>
                       </div>
                     ) : (
-                      <p style={{ color: '#64748b', textAlign: 'center', padding: '20px' }}>
-                        No dori requirements specified in the cutting matrix
-                      </p>
+                      <div style={{ 
+                        textAlign: 'center', 
+                        padding: '20px', 
+                        color: '#64748b',
+                        background: '#f8fafc',
+                        borderRadius: '8px',
+                        marginTop: '16px'
+                      }}>
+                        No dori costs calculated. Please ensure:
+                        <ul style={{ textAlign: 'left', margin: '12px 0', paddingLeft: '20px' }}>
+                          <li>Dori types are selected for each placement</li>
+                          <li>Dori colors are selected in the cutting matrix</li>
+                          <li>Shades are not blocked by existing orders</li>
+                        </ul>
+                      </div>
                     )}
                   </div>
                 )}
