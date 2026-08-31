@@ -359,8 +359,8 @@ export default function RgpDashboard({
           bgColor: "#f0f9ff",
           animation: "pulse",
           badge: "ZIP",
-          description: "ZIP PO Prepared By Supervisor detail",
-          info: "View and download ZIP POs grouped by Lot.",
+          description: "View, track & re-download ZIP POs",
+          info: "View, manage, and re-download ZIP purchase orders by lot, supervisor, and date.",
           progress: 65,
           lastUpdated: "50 min ago"
         },
@@ -374,8 +374,8 @@ export default function RgpDashboard({
           bgColor: "#eff6ff",
           animation: "pulse",
           badge: "ZIP",
-          description: "ZIP PO Prepared By Supervisor detail",
-          info: "View and download ZIP POs grouped by Lot.",
+          description: "ZIP PO Approval & details",
+          info: "Review and approve ZIP PO requests with complete item and color breakdown.",
           progress: 25,
           lastUpdated: "2 hours ago"
         },
@@ -392,7 +392,7 @@ export default function RgpDashboard({
           animation: "pulse",
           badge: "DORI",
           description: "Manage DORI thread and cord orders",
-          info: "Create and track DORI thread orders with specifications, quantities, and supplier details for garment production.",
+          info: "Create, track, and re-download DORI thread orders with specifications, quantities, and supplier details.",
           progress: 55,
           lastUpdated: "35 min ago"
         },
@@ -406,8 +406,8 @@ export default function RgpDashboard({
           bgColor: "#eff6ff",
           animation: "pulse",
           badge: "DORI",
-          description: "DORI PO analytics and overview",
-          info: "Comprehensive dashboard for DORI purchase orders with analytics, tracking, and performance metrics.",
+          description: "View, track & re-download DORI POs",
+          info: "Comprehensive dashboard for DORI purchase orders with analytics, tracking, and one-click PO PDF re-downloads.",
           progress: 90,
           lastUpdated: "5 min ago"
         },

@@ -1,17 +1,21 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import QRCode from 'qrcode';
 
-// Google Sheets Configuration
+// Google Sheets Configuration for DORI
 const SPREADSHEET_ID = '1LjwZqU26F0xwL1tEyps8txsM1qS8LLUuE-sy_4CQK6k';
 const API_KEY = 'AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk';
 const PURCHASE_ORDERS_RANGE = 'DoriPurchaseOrders!A:V';
+const DORI_DATA_RANGE = 'DoriData!A:C';
+const QR_SYSTEM_URL = 'https://script.google.com/macros/s/AKfycbxBfA7maSXGPVW3I_HkRpL27l6nC_CgkHip4KYOEpMsdFHcsPTUuiYp0OuFz4_y3zZq/exec';
 
 // Helper functions
 const formatDate = (dateString) => {
   if (!dateString) return '-';
   try {
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString;
     return date.toLocaleDateString('en-IN', {
       day: '2-digit',
       month: '2-digit',
@@ -23,90 +27,516 @@ const formatDate = (dateString) => {
 };
 
 const formatNumber = (num) => {
-  if (!num) return '0';
+  if (!num && num !== 0) return '0';
   return parseInt(num).toLocaleString('en-IN');
 };
 
 const formatCurrency = (amount) => {
-  if (!amount) return '₹0';
-  return `₹${parseInt(amount).toLocaleString('en-IN')}`;
+  if (!amount && amount !== 0) return '₹0';
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount).replace(/[^\d.]/g, '')) || 0;
+  return `₹${Math.round(num).toLocaleString('en-IN')}`;
 };
 
 const safeJSONParse = (str, defaultValue = {}) => {
+  if (!str) return defaultValue;
+  if (typeof str === 'object') return str;
   try {
-    return JSON.parse(str);
+    let clean = String(str).trim();
+    if (clean.startsWith('"') && clean.endsWith('"')) {
+      clean = clean.slice(1, -1);
+    }
+    return JSON.parse(clean);
   } catch {
     return defaultValue;
-  }
-};
-
-const parseColorBreakdown = (breakdown) => {
-  if (!breakdown) return [];
-  try {
-    return breakdown.split(';').map(item => {
-      const [color, pieces] = item.split(':').map(s => s.trim());
-      return { color, pieces: pieces?.replace('pcs', '') || '0' };
-    });
-  } catch {
-    return [];
   }
 };
 
 const parsePlacements = (val) => {
   if (!val) return [];
   if (Array.isArray(val)) return val;
-  
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return [];
-    
     if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
       try {
         const parsed = JSON.parse(trimmed);
         if (Array.isArray(parsed)) return parsed;
         return [parsed];
-      } catch {
-        // fail silent, fallback
-      }
+      } catch {}
     }
-    
     if (trimmed.includes(',')) {
       return trimmed.split(',').map(s => s.trim()).filter(Boolean);
     }
-    
     try {
       const parsed = JSON.parse(trimmed);
-      if (typeof parsed === 'string') return [parsed];
       if (Array.isArray(parsed)) return parsed;
       return [String(parsed)];
     } catch {
       return [trimmed];
     }
   }
-  
   return [String(val)];
 };
 
-// New helper function to calculate aging
+const parseColorBreakdown = (breakdown) => {
+  if (!breakdown) return {};
+  if (typeof breakdown === 'object') return breakdown;
+  try {
+    const str = String(breakdown).trim();
+    if (str.startsWith('{')) {
+      return JSON.parse(str);
+    }
+    const result = {};
+    str.split(';').forEach(item => {
+      const parts = item.split(':').map(s => s.trim());
+      if (parts[0]) {
+        result[parts[0]] = parseInt((parts[1] || '0').replace(/[^\d]/g, '')) || 0;
+      }
+    });
+    return result;
+  } catch {
+    return {};
+  }
+};
+
 const calculateAging = (timestamp, materialEntryDate) => {
   if (!timestamp) return 0;
-  
   const timestampDate = new Date(timestamp);
-  let endDate;
-  
-  if (materialEntryDate) {
-    // If Material Entry Date is present, use it as end date
-    endDate = new Date(materialEntryDate);
-  } else {
-    // If Material Entry Date is not present, use today's date
-    endDate = new Date();
-  }
-  
-  // Calculate difference in days
+  let endDate = materialEntryDate ? new Date(materialEntryDate) : new Date();
   const timeDiff = endDate.getTime() - timestampDate.getTime();
   const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
-  
-  return Math.max(0, daysDiff); // Return 0 if negative
+  return Math.max(0, daysDiff);
+};
+
+const getAgingColor = (days) => {
+  if (days <= 2) return '#10b981';
+  if (days <= 5) return '#f59e0b';
+  return '#ef4444';
+};
+
+// Fetch Dori Quality / Rate Data
+const fetchDoriQualityData = async () => {
+  try {
+    const range = encodeURIComponent(DORI_DATA_RANGE);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}?key=${API_KEY}`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!data?.values?.length) return [];
+    const headers = data.values[0].map(h => (h || '').toString().trim().toLowerCase());
+    const doriTypeIndex = headers.findIndex(h => h.includes('dori') || h.includes('zip') || h.includes('type'));
+    const colorIndex = headers.findIndex(h => h.includes('color') || h.includes('colour'));
+    const priceIndex = headers.findIndex(h => h.includes('price') || h.includes('rate') || h.includes('cost'));
+    if (doriTypeIndex === -1 || colorIndex === -1 || priceIndex === -1) return [];
+
+    const doriData = [];
+    for (let i = 1; i < data.values.length; i++) {
+      const r = data.values[i] || [];
+      const type = (r[doriTypeIndex] || '').toString().trim();
+      const color = (r[colorIndex] || '').toString().trim();
+      const price = parseFloat((r[priceIndex] || '0').toString().replace(/[^\d.]/g, '')) || 0;
+      if (type && color) {
+        doriData.push({ type, color, price });
+      }
+    }
+    return doriData;
+  } catch (err) {
+    console.warn('Could not fetch Dori Quality Data:', err);
+    return [];
+  }
+};
+
+// Generate Full Dori Purchase Order PDF Document
+export const generateDoriPoPdf = async (row, doriQualityData = []) => {
+  if (!row) throw new Error('Order data is missing');
+
+  const lotNumber = (row['Lot Number'] || 'Unknown').toString().trim();
+  const issueDate = row['Issue Date'] || '';
+  const supervisor = row['Supervisor'] || '';
+  const garmentType = row['Garment Type'] || '';
+  const style = row['Style'] || '';
+  const fabric = row['Fabric'] || '';
+  const brand = row['Brand'] || '';
+  const priority = row['Priority'] || 'Normal';
+  const consignee = row['Consignee'] || '';
+  const totalPieces = parseInt(row['Total Pieces']) || 0;
+
+  // Parse color breakdown and specifications
+  let colorBreakdownObj = parseColorBreakdown(row['Color Breakdown']);
+  const selectedPlacements = parsePlacements(row['Selected Placements']);
+  const placementQuantities = safeJSONParse(row['Placement Quantities'], {});
+  const placementZipTypes = safeJSONParse(row['Placement Zip Types'] || row['Placement Dori Types'], {});
+  const zipSelections = safeJSONParse(row['Zip Selections'] || row['Dori Selections'], {});
+
+  // Generate QR codes
+  const gateEntryQRUrl = `${QR_SYSTEM_URL}?action=gateForm&lot=${encodeURIComponent(lotNumber)}`;
+  const materialInQRUrl = `${QR_SYSTEM_URL}?action=materialForm&lot=${encodeURIComponent(lotNumber)}`;
+  const supplierQRUrl = `${QR_SYSTEM_URL}?action=supplierForm&lot=${encodeURIComponent(lotNumber)}`;
+
+  const [gateQRImage, materialQRImage, supplierQRImage] = await Promise.all([
+    QRCode.toDataURL(gateEntryQRUrl, { width: 120, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } }).catch(() => null),
+    QRCode.toDataURL(materialInQRUrl, { width: 120, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } }).catch(() => null),
+    QRCode.toDataURL(supplierQRUrl, { width: 120, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } }).catch(() => null)
+  ]);
+
+  const qrCodes = {
+    gateEntry: { image: gateQRImage },
+    materialIn: { image: materialQRImage },
+    supplierEntry: { image: supplierQRImage }
+  };
+
+  const getDoriPrice = (dType, dColor) => {
+    if (!dType || !dColor || !doriQualityData?.length) return 0;
+    const normT = dType.toString().trim().toLowerCase();
+    const normC = dColor.toString().trim().toLowerCase();
+    const item = doriQualityData.find(it => (it.type || '').trim().toLowerCase() === normT && (it.color || '').trim().toLowerCase() === normC);
+    if (item && item.price) return parseFloat(item.price) || 0;
+    return 0;
+  };
+
+  const line = 0.9;
+  const doc = new jsPDF({ unit: 'pt', format: 'A4' });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const M = 18;
+  const borderPad = 6;
+  doc.setDrawColor(0); doc.setTextColor(0); doc.setLineWidth(line);
+  const borderX = 8, borderY = 8, borderW = W - 16, borderH = H - 16;
+
+  const printableDate = (dStr) => {
+    if (!dStr) return '';
+    try {
+      const d = new Date(dStr);
+      return isNaN(d.getTime()) ? dStr : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    } catch { return dStr; }
+  };
+
+  const drawHeader = () => {
+    doc.rect(borderX, borderY, borderW, borderH);
+    const CM = M + borderPad;
+    const contentWidth = W - (CM * 2);
+    const boxY = borderY + 20;
+    const boxSize = 100;
+    const centerPoint = borderX + borderW / 2;
+
+    // Gate Entry QR
+    const box1X = CM;
+    doc.rect(box1X, boxY, boxSize, boxSize);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('SCAN FOR', box1X + boxSize/2, boxY + 12, { align: 'center' });
+    doc.text('GATE ENTRY', box1X + boxSize/2, boxY + 24, { align: 'center' });
+    if (qrCodes.gateEntry.image) {
+      doc.addImage(qrCodes.gateEntry.image, 'PNG', box1X + 12, boxY + 32, boxSize - 24, boxSize - 44);
+    } else {
+      doc.rect(box1X + 12, boxY + 32, boxSize - 24, boxSize - 44);
+      doc.setFontSize(7);
+      doc.text('GATE QR', box1X + boxSize/2, boxY + boxSize/2 + 5, { align: 'center' });
+    }
+
+    // Material In QR
+    const box2X = CM + contentWidth - boxSize;
+    doc.rect(box2X, boxY, boxSize, boxSize);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('SCAN FOR', box2X + boxSize/2, boxY + 12, { align: 'center' });
+    doc.text('MATERIAL IN', box2X + boxSize/2, boxY + 24, { align: 'center' });
+    if (qrCodes.materialIn.image) {
+      doc.addImage(qrCodes.materialIn.image, 'PNG', box2X + 12, boxY + 32, boxSize - 24, boxSize - 44);
+    } else {
+      doc.rect(box2X + 12, boxY + 32, boxSize - 24, boxSize - 44);
+      doc.setFontSize(7);
+      doc.text('MATERIAL QR', box2X + boxSize/2, boxY + boxSize/2 + 5, { align: 'center' });
+    }
+
+    // Header Title
+    const headerTitleY = boxY + boxSize/2 - 15;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.text('PURCHASE ORDER', centerPoint, headerTitleY, { align: 'center' });
+    doc.setFontSize(12);
+    doc.text('DORI MATERIAL REQUIREMENT', centerPoint, headerTitleY + 18, { align: 'center' });
+    doc.setFontSize(16);
+    doc.text(`LOT NO: ${lotNumber}`, centerPoint, headerTitleY + 40, { align: 'center' });
+
+    // Fields Section
+    const fieldsY = boxY + boxSize + 12;
+    const fieldH = 20;
+    const dateItemW = (contentWidth / 2) - 1;
+    const dateItemX = CM;
+
+    doc.rect(dateItemX, fieldsY, dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('DATE :', dateItemX + 4, fieldsY + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(printableDate(issueDate), dateItemX + 35, fieldsY + 12);
+
+    doc.rect(dateItemX + dateItemW, fieldsY, dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('ITEM :', dateItemX + dateItemW + 4, fieldsY + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(garmentType || style || '', dateItemX + dateItemW + 35, fieldsY + 12);
+
+    const pcsPriorityX = CM;
+    doc.rect(pcsPriorityX, fieldsY + fieldH, dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('TOTAL PCS', pcsPriorityX + 4, fieldsY + fieldH + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(totalPieces.toString(), pcsPriorityX + 60, fieldsY + fieldH + 12);
+
+    doc.rect(pcsPriorityX + dateItemW, fieldsY + fieldH, dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('PRIORITY', pcsPriorityX + dateItemW + 4, fieldsY + fieldH + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(priority, pcsPriorityX + dateItemW + 50, fieldsY + fieldH + 12);
+
+    const brandSupervisorX = CM;
+    doc.rect(brandSupervisorX, fieldsY + (fieldH * 2), dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('BRAND :', brandSupervisorX + 4, fieldsY + (fieldH * 2) + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(brand || '', brandSupervisorX + 45, fieldsY + (fieldH * 2) + 12);
+
+    doc.rect(brandSupervisorX + dateItemW, fieldsY + (fieldH * 2), dateItemW, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('SUPERVISOR : ', brandSupervisorX + dateItemW + 4, fieldsY + (fieldH * 2) + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(supervisor || '________', brandSupervisorX + dateItemW + 65, fieldsY + (fieldH * 2) + 12);
+
+    const consigneeY = fieldsY + (fieldH * 3);
+    doc.rect(CM, consigneeY, contentWidth, fieldH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('CONSIGNEE :', CM + 4, consigneeY + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(consignee || '________________________', CM + 65, consigneeY + 12);
+
+    const dividingLineY = consigneeY + fieldH + 5;
+    doc.setLineWidth(1.5);
+    doc.setDrawColor(0);
+    doc.line(CM, dividingLineY, CM + contentWidth, dividingLineY);
+    doc.setLineWidth(line);
+
+    return { CM, contentWidth, breakdownStartY: dividingLineY + 15 };
+  };
+
+  const drawSimpleFooter = (currentPage, pageCount) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`page ${currentPage} of ${pageCount}`, W / 2, H - 10, { align: 'center' });
+  };
+
+  const drawFooterWithSignatures = () => {
+    const CM = M + borderPad;
+    const contentWidth = W - (CM * 2);
+    const signatureSectionHeight = 130;
+    const signatureSectionY = H - signatureSectionHeight;
+    const signatureBoxWidth = 170;
+    const signatureBoxHeight = 50;
+    const signatureSpacing = (contentWidth - (signatureBoxWidth * 3)) / 2;
+    const boxPad = 5;
+
+    doc.setLineWidth(line);
+    doc.setDrawColor(0);
+    doc.setTextColor(0);
+
+    const drawSignatureBox = (x, lbl) => {
+      doc.rect(x, signatureSectionY, signatureBoxWidth, signatureBoxHeight);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+      doc.text(lbl.toLowerCase(), x + boxPad, signatureSectionY + 10);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      doc.text('NAME:', x + boxPad, signatureSectionY + 28);
+      doc.line(x + 35, signatureSectionY + 28, x + signatureBoxWidth - boxPad, signatureSectionY + 28);
+      doc.text('date:', x + boxPad, signatureSectionY + 43);
+      doc.line(x + 35, signatureSectionY + 43, x + signatureBoxWidth - boxPad, signatureSectionY + 43);
+    };
+
+    const supervisorBoxX = CM;
+    drawSignatureBox(supervisorBoxX, 'SUPERVISOR SIGN');
+    const supplierBoxX = supervisorBoxX + signatureBoxWidth + signatureSpacing;
+    drawSignatureBox(supplierBoxX, 'SUPPLIER SIGN');
+    const receiverBoxX = supplierBoxX + signatureBoxWidth + signatureSpacing;
+    drawSignatureBox(receiverBoxX, 'RECEIVER SIGN');
+
+    const instructionsY = signatureSectionY + signatureBoxHeight + 15;
+    const centerX = CM + contentWidth / 2;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.text('QR CODE USAGE INSTRUCTION:', centerX, instructionsY, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text('• LEFT QR: SCAN WHEN MATERIAL ENTER THE GATE - UPDATES GATE ENTRY PERSON AND DATE', centerX, instructionsY + 10, { align: 'center' });
+    doc.text('• RIGHT QR: SCAN WHEN MATERIAL ARE RECEIVED - UPDATE MATERIAL RECEIVED STATUS AND DATE', centerX, instructionsY + 20, { align: 'center' });
+  };
+
+  const { CM, contentWidth, breakdownStartY } = drawHeader();
+  let finalContentY = breakdownStartY;
+  const signatureSectionHeight = 120;
+
+  const doriHead = [['DORI TYPE', 'PLACEMENT', 'COLOUR', 'DORI COLOUR', 'QUANTITY', 'PRICE', 'TOTAL']];
+  const doriBody = [];
+  let totalDoriCost = 0;
+  const doriTypeSummary = {};
+
+  const colors = Object.keys(colorBreakdownObj).length > 0 ? Object.keys(colorBreakdownObj) : ['Default'];
+  const placements = selectedPlacements.length > 0 ? selectedPlacements : ['Main'];
+
+  placements.forEach(placement => {
+    const placementQuantity = placementQuantities[placement] || 1;
+    const doriType = placementZipTypes[placement] || 'Standard Dori';
+    colors.forEach(color => {
+      const qty = colorBreakdownObj[color] || totalPieces || 0;
+      const doriColor = zipSelections[color] || color;
+      const price = getDoriPrice(doriType, doriColor);
+      const reqQty = qty * placementQuantity;
+      const rowTotal = price * reqQty;
+      totalDoriCost += rowTotal;
+
+      if (!doriTypeSummary[doriType]) doriTypeSummary[doriType] = 0;
+      doriTypeSummary[doriType] += reqQty;
+
+      if (reqQty > 0 || placements.length === 1) {
+        doriBody.push([
+          doriType,
+          `${placement} (${placementQuantity} per pc)`,
+          color,
+          doriColor,
+          reqQty.toString(),
+          price > 0 ? price.toFixed(2) : '-',
+          rowTotal > 0 ? rowTotal.toFixed(2) : '-'
+        ]);
+      }
+    });
+  });
+
+  const totalQuantityAll = doriBody.reduce((sum, r) => sum + (parseInt(r[4]) || 0), 0);
+  const totalCostVal = parseFloat(row['Total Cost (₹)']) || totalDoriCost;
+
+  const doriFoot = [
+    ['', '', '', '', `T QTY: ${totalQuantityAll || totalPieces}`, 'Total:', totalCostVal > 0 ? totalCostVal.toFixed(2) : '-']
+  ];
+
+  let currentPage = 1;
+  let pageCount = 1;
+
+  autoTable(doc, {
+    head: doriHead,
+    body: doriBody,
+    foot: doriFoot,
+    startY: breakdownStartY,
+    theme: 'grid',
+    tableWidth: contentWidth,
+    margin: { top: breakdownStartY, left: CM, right: CM, bottom: 50 },
+    pageBreak: 'auto',
+    styles: {
+      font: 'helvetica',
+      fontSize: 9,
+      textColor: [0,0,0],
+      lineColor: [0,0,0],
+      lineWidth: line,
+      cellPadding: 4,
+      halign: 'left',
+    },
+    headStyles: { 
+      fillColor: [240, 240, 240], 
+      textColor: [0,0,0], 
+      fontStyle: 'bold',
+      halign: 'center'
+    },
+    footStyles: { 
+      fillColor: [240, 240, 240], 
+      textColor: [0,0,0], 
+      fontStyle: 'bold',
+      halign: 'right'
+    },
+    columnStyles: { 
+      0: { cellWidth: 120, halign: 'left' },
+      1: { cellWidth: 120, halign: 'left' },
+      2: { cellWidth: 70, halign: 'center' },
+      3: { cellWidth: 80, halign: 'center' },
+      4: { cellWidth: 60, halign: 'center' },
+      5: { cellWidth: 50, halign: 'center' },
+      6: { cellWidth: 50, halign: 'right' }
+    },
+    didDrawPage: function(data) {
+      currentPage = data.pageNumber;
+      pageCount = data.pageCount;
+      if (currentPage < pageCount) {
+        drawSimpleFooter(currentPage, pageCount);
+      }
+      if (data.pageNumber > 1) {
+        drawHeader();
+        drawSimpleFooter(currentPage, pageCount);
+      }
+    }
+  });
+
+  finalContentY = doc.lastAutoTable.finalY + 20;
+
+  const summaryData = Object.entries(doriTypeSummary).map(([doriType, totalQty]) => ({ doriType, totalQty }));
+  if (summaryData.length > 0) {
+    const summaryBoxWidth = contentWidth;
+    const summaryBoxHeight = Math.max(80, summaryData.length * 20 + 50);
+
+    if (finalContentY + summaryBoxHeight > H - signatureSectionHeight - 20) {
+      doc.addPage();
+      currentPage++;
+      pageCount++;
+      drawHeader();
+      drawSimpleFooter(currentPage, pageCount);
+      finalContentY = breakdownStartY;
+    }
+
+    const summaryBoxX = CM;
+    const summaryBoxY = finalContentY;
+
+    doc.setDrawColor(0);
+    doc.setLineWidth(line);
+    doc.rect(summaryBoxX, summaryBoxY, summaryBoxWidth, summaryBoxHeight);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text('DORI TYPE SUMMARY', summaryBoxX + summaryBoxWidth/2, summaryBoxY + 20, { align: 'center' });
+    doc.setLineWidth(0.8);
+    doc.line(summaryBoxX + 10, summaryBoxY + 30, summaryBoxX + summaryBoxWidth - 10, summaryBoxY + 30);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+
+    let summaryContentY = summaryBoxY + 50;
+    summaryData.forEach((item, idx) => {
+      const rowY = summaryContentY + (idx * 20);
+      doc.text(`${item.doriType}:`, summaryBoxX + 20, rowY);
+      doc.text(`${item.totalQty.toLocaleString()}`, summaryBoxX + summaryBoxWidth - 20, rowY, { align: 'right' });
+    });
+
+    const sumTotalQty = summaryData.reduce((s, it) => s + it.totalQty, 0);
+    const totalY = summaryContentY + (summaryData.length * 20) + 10;
+    doc.setLineWidth(0.8);
+    doc.line(summaryBoxX + 10, totalY, summaryBoxX + summaryBoxWidth - 10, totalY);
+    doc.setFont('helvetica', 'bold');
+    doc.text('GRAND TOTAL OF DORI PCS:', summaryBoxX + 20, totalY + 18);
+    doc.text(`${sumTotalQty.toLocaleString()}`, summaryBoxX + summaryBoxWidth - 20, totalY + 18, { align: 'right' });
+
+    finalContentY = summaryBoxY + summaryBoxHeight + 20;
+
+    const supplierQRSize = 80;
+    const supplierQRX = CM + (contentWidth - supplierQRSize) / 2;
+    const supplierQRY = finalContentY + 20;
+
+    doc.rect(supplierQRX, supplierQRY, supplierQRSize, supplierQRSize);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text('SCAN FOR', supplierQRX + supplierQRSize/2, supplierQRY + 10, { align: 'center' });
+    doc.text('SUPPLIER ENTRY', supplierQRX + supplierQRSize/2, supplierQRY + 20, { align: 'center' });
+
+    if (qrCodes.supplierEntry.image) {
+      doc.addImage(qrCodes.supplierEntry.image, 'PNG', supplierQRX + 10, supplierQRY + 25, supplierQRSize - 20, supplierQRSize - 35);
+    }
+  }
+
+  drawFooterWithSignatures();
+  drawSimpleFooter(currentPage, pageCount);
+
+  const cleanLot = lotNumber.replace(/[^\w\-]+/g, '_');
+  const cleanDate = printableDate(issueDate).replace(/\//g, '-');
+  const filename = `Lot_${cleanLot}_Purchase_Order_${cleanDate || 'report'}.pdf`;
+
+  return { doc, filename };
 };
 
 const DoriPurchaseDashboard = () => {
@@ -120,54 +550,61 @@ const DoriPurchaseDashboard = () => {
     status: '',
     dateFrom: '',
     dateTo: '',
-    zipPlacement: '' // Added zip placement filter
+    zipPlacement: ''
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  // PO Download & Preview State
+  const [downloadingPoId, setDownloadingPoId] = useState(null);
+  const [doriQualityRates, setDoriQualityRates] = useState([]);
+  const [previewPoData, setPreviewPoData] = useState(null);
+  const [showLotSearchModal, setShowLotSearchModal] = useState(false);
+  const [lotSearchQuery, setLotSearchQuery] = useState('');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
 
   // Fetch data from Google Sheets
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
-      
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${PURCHASE_ORDERS_RANGE}?key=${API_KEY}`;
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch data: ${response.status}`);
+
+      const [sheetRes, doriRates] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${PURCHASE_ORDERS_RANGE}?key=${API_KEY}`),
+        fetchDoriQualityData()
+      ]);
+
+      if (!sheetRes.ok) {
+        throw new Error(`Failed to fetch data: ${sheetRes.status}`);
       }
-      
-      const result = await response.json();
+
+      const result = await sheetRes.json();
       const values = result.values;
-      
+
       if (!values || values.length === 0) {
         throw new Error('No data found in the spreadsheet');
       }
-      
-      // Process the data
+
       const headers = values[0];
       const rows = values.slice(1);
-      
+
       const processedData = rows.map((row, index) => {
         const obj = { id: index + 1 };
         headers.forEach((header, colIndex) => {
           obj[header] = row[colIndex] || '';
         });
-        
-        // Add derived fields for easier filtering
+
         obj.hasGateEntry = !!(obj['Gate Entry Person'] && obj['Gate Entry Date']);
         obj.hasMaterialReceived = !!(obj['Material Received By'] && obj['Material Received Date']);
         obj.hasSupplierEntry = !!(obj['Supplier Name'] && obj['Material Entry Date']);
-        
-        // Calculate aging
         obj.aging = calculateAging(obj['Timestamp'], obj['Material Entry Date']);
-        
+
         return obj;
       });
-      
+
       setData(processedData);
-      
+      setDoriQualityRates(doriRates);
+
     } catch (err) {
       console.error('Error fetching data:', err);
       setError(err.message);
@@ -180,7 +617,6 @@ const DoriPurchaseDashboard = () => {
     fetchData();
   }, []);
 
-  // Handle back button click
   const handleBackButton = () => {
     if (window.history.length > 1) {
       window.history.back();
@@ -189,145 +625,112 @@ const DoriPurchaseDashboard = () => {
     }
   };
 
-  // Get unique values for filters
+  // Direct Dori PO PDF Download
+  const handleDownloadPo = async (row) => {
+    if (!row || downloadingPoId) return;
+    setDownloadingPoId(row.id);
+    try {
+      const { doc, filename } = await generateDoriPoPdf(row, doriQualityRates);
+      doc.save(filename);
+      setFeedbackMessage(`✅ Successfully downloaded Dori PO for Lot ${row['Lot Number'] || ''}`);
+      setTimeout(() => setFeedbackMessage(''), 4000);
+    } catch (err) {
+      console.error('Error generating Dori PO PDF:', err);
+      alert(`❌ Failed to generate Dori PO PDF: ${err.message}`);
+    } finally {
+      setDownloadingPoId(null);
+    }
+  };
+
+  const handlePreviewPo = (row) => {
+    setPreviewPoData(row);
+  };
+
   const filterOptions = useMemo(() => {
     const garmentTypes = [...new Set(data.map(row => row['Garment Type']).filter(Boolean))];
     const supervisors = [...new Set(data.map(row => row['Supervisor']).filter(Boolean))];
-    
-    // Extract all unique zip placements
-    const allPlacements = data.flatMap(row => {
-      const placements = parsePlacements(row['Selected Placements']);
-      return placements;
-    }).filter(Boolean);
-    
+    const allPlacements = data.flatMap(row => parsePlacements(row['Selected Placements'])).filter(Boolean);
     const zipPlacements = [...new Set(allPlacements)];
-    
     return { garmentTypes, supervisors, zipPlacements };
   }, [data]);
 
-  // Filter and search data
   const filteredData = useMemo(() => {
     let result = data;
 
-    // Text search
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
       result = result.filter(row =>
         Object.entries(row).some(([key, value]) =>
-          key !== 'id' && 
-          String(value).toLowerCase().includes(searchLower)
+          key !== 'id' && String(value).toLowerCase().includes(searchLower)
         )
       );
     }
 
-    // Apply filters
     if (filters.garmentType) {
-      result = result.filter(row => 
-        row['Garment Type']?.toLowerCase().includes(filters.garmentType.toLowerCase())
-      );
+      result = result.filter(row => row['Garment Type']?.toLowerCase().includes(filters.garmentType.toLowerCase()));
     }
 
     if (filters.supervisor) {
-      result = result.filter(row => 
-        row['Supervisor']?.toLowerCase().includes(filters.supervisor.toLowerCase())
-      );
+      result = result.filter(row => row['Supervisor']?.toLowerCase().includes(filters.supervisor.toLowerCase()));
     }
 
     if (filters.status) {
       switch (filters.status) {
-        case 'with-gate-entry':
-          result = result.filter(row => row.hasGateEntry);
-          break;
-        case 'with-material-received':
-          result = result.filter(row => row.hasMaterialReceived);
-          break;
-        case 'with-supplier-entry':
-          result = result.filter(row => row.hasSupplierEntry);
-          break;
-        case 'pending-gate-entry':
-          result = result.filter(row => !row.hasGateEntry);
-          break;
-        case 'pending-material-received':
-          result = result.filter(row => !row.hasMaterialReceived);
-          break;
-        case 'pending-supplier-entry':
-          result = result.filter(row => !row.hasSupplierEntry);
-          break;
+        case 'with-gate-entry': result = result.filter(row => row.hasGateEntry); break;
+        case 'with-material-received': result = result.filter(row => row.hasMaterialReceived); break;
+        case 'with-supplier-entry': result = result.filter(row => row.hasSupplierEntry); break;
+        case 'pending-gate-entry': result = result.filter(row => !row.hasGateEntry); break;
+        case 'pending-material-received': result = result.filter(row => !row.hasMaterialReceived); break;
+        case 'pending-supplier-entry': result = result.filter(row => !row.hasSupplierEntry); break;
+        default: break;
       }
     }
 
     if (filters.dateFrom) {
-      result = result.filter(row => {
-        const rowDate = new Date(row['Issue Date']);
-        const filterDate = new Date(filters.dateFrom);
-        return rowDate >= filterDate;
-      });
+      result = result.filter(row => new Date(row['Issue Date']) >= new Date(filters.dateFrom));
     }
 
     if (filters.dateTo) {
-      result = result.filter(row => {
-        const rowDate = new Date(row['Issue Date']);
-        const filterDate = new Date(filters.dateTo);
-        return rowDate <= filterDate;
-      });
+      result = result.filter(row => new Date(row['Issue Date']) <= new Date(filters.dateTo));
     }
 
-    // Add zip placement filter
     if (filters.zipPlacement) {
       result = result.filter(row => {
         const placements = parsePlacements(row['Selected Placements']);
-        return placements.some(placement => 
-          placement.toLowerCase().includes(filters.zipPlacement.toLowerCase())
-        );
+        return placements.some(p => p.toLowerCase().includes(filters.zipPlacement.toLowerCase()));
       });
     }
 
     return result;
   }, [data, searchTerm, filters]);
 
-  // Pagination
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
     return filteredData.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filters, itemsPerPage]);
 
-  // Statistics
   const stats = useMemo(() => {
     const total = filteredData.length;
     const totalPieces = filteredData.reduce((sum, row) => sum + (parseInt(row['Total Pieces']) || 0), 0);
-    const totalCost = filteredData.reduce((sum, row) => sum + (parseInt(row['Total Cost (₹)']) || 0), 0);
-    
+    const totalCost = filteredData.reduce((sum, row) => sum + (parseFloat(row['Total Cost (₹)']) || 0), 0);
     const withGateEntry = filteredData.filter(row => row.hasGateEntry).length;
     const withMaterialReceived = filteredData.filter(row => row.hasMaterialReceived).length;
     const withSupplierEntry = filteredData.filter(row => row.hasSupplierEntry).length;
 
-    // Aging statistics
-    const averageAging = filteredData.length > 0 
+    const averageAging = filteredData.length > 0
       ? Math.round(filteredData.reduce((sum, row) => sum + (row.aging || 0), 0) / filteredData.length)
       : 0;
 
-    return {
-      total,
-      totalPieces,
-      totalCost,
-      withGateEntry,
-      withMaterialReceived,
-      withSupplierEntry,
-      averageAging
-    };
+    return { total, totalPieces, totalCost, withGateEntry, withMaterialReceived, withSupplierEntry, averageAging };
   }, [filteredData]);
 
   const handleFilterChange = (filterName, value) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterName]: value
-    }));
+    setFilters(prev => ({ ...prev, [filterName]: value }));
   };
 
   const clearFilters = () => {
@@ -337,30 +740,16 @@ const DoriPurchaseDashboard = () => {
       status: '',
       dateFrom: '',
       dateTo: '',
-      zipPlacement: '' // Added zip placement filter
+      zipPlacement: ''
     });
     setSearchTerm('');
   };
 
-  // Download Excel/CSV
   const downloadExcel = () => {
     const headers = [
-      'Sr. No.',
-      'Lot Number',
-      'Garment Type',
-      'Style',
-      'Fabric',
-      'Total Pieces',
-      'Issue Date',
-      'Supervisor',
-      'Total Cost (₹)',
-      'Gate Entry Person',
-      'Gate Entry Date',
-      'Material Received By',
-      'Material Received Date',
-      'Supplier Name',
-      'Material Entry Date',
-      'Aging (Days)'
+      'Sr. No.', 'Lot Number', 'Garment Type', 'Style', 'Fabric', 'Total Pieces',
+      'Issue Date', 'Supervisor', 'Total Cost (₹)', 'Gate Entry Person', 'Gate Entry Date',
+      'Material Received By', 'Material Received Date', 'Supplier Name', 'Material Entry Date', 'Aging (Days)'
     ];
 
     const csvData = filteredData.map((row, index) => [
@@ -384,254 +773,82 @@ const DoriPurchaseDashboard = () => {
 
     const csvContent = [
       headers.join(','),
-      ...csvData.map(row => 
-        row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(',')
-      )
+      ...csvData.map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `zip-purchase-orders-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `dori-purchase-orders-${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Download PDF
-const downloadPDF = () => {
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a3'
-  });
+  const downloadPDF = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a3' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 8;
 
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 8;
+    doc.setDrawColor(100, 100, 100);
+    doc.setLineWidth(0.3);
+    doc.rect(margin, margin, pageWidth - (2 * margin), pageHeight - (2 * margin));
 
-  // Page border - light gray for B&W printing
-  doc.setDrawColor(100, 100, 100);
-  doc.setLineWidth(0.3);
-  doc.rect(margin, margin, pageWidth - (2 * margin), pageHeight - (2 * margin));
+    doc.setFillColor(255, 255, 255);
+    doc.rect(margin, margin, pageWidth - (2 * margin), 18, 'F');
+    doc.setFontSize(18);
+    doc.setTextColor(0, 0, 128);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DORI PURCHASE ORDERS REPORT', pageWidth / 2, margin + 10, { align: 'center' });
 
-  // Header - White background (changed from dark gray)
-  doc.setFillColor(255, 255, 255); // White background
-  doc.rect(margin, margin, pageWidth - (2 * margin), 18, 'F');
-  
-  // Title - Navy blue text
-  doc.setFontSize(18);
-  doc.setTextColor(0, 0, 128); // Navy blue color
-  doc.setFont('helvetica', 'bold');
-  doc.text('Dori Purchase OrderS REPORT', pageWidth / 2, margin + 10, { align: 'center' });
-
-  // Subtitle - Dark gray text
-  doc.setFontSize(9);
-  doc.setTextColor(80, 80, 80); // Dark gray for subtitle
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, margin + 16, { align: 'center' });
-
-  // Prepare table data with zip status
-  const tableData = filteredData.map((row, index) => {
-    const hasPendingZip = !row.hasSupplierEntry || !row.hasMaterialReceived;
-    const zipStatus = hasPendingZip ? 'PENDING' : 'DONE';
-    
-    return [
-      (index + 1).toString(),
-      row['Lot Number'] || '-',
-      row['Garment Type'] || '-',
-      row['Style'] || '-',
-      row['Fabric'] || '-',
-      formatNumber(row['Total Pieces']),
-      formatCurrency(row['Total Cost (₹)']).replace('₹', ''),
-      formatDate(row['Issue Date']),
-      row['Supervisor'] || '-',
-      row.aging?.toString() || '0',
-      zipStatus
-    ];
-  });
-
-  // Create table with optimized column widths for A3
-  autoTable(doc, {
-    head: [[
-      'Sr.No.', 
-      'Lot No.', 
-      'Garment Type', 
-      'Style', 
-      'Fabric',
-      'Pieces', 
-      'Cost', 
-      'Issue Date', 
-      'Supervisor', 
-      'Aging (Days)',
-      'Status'
-    ]],
-    body: tableData,
-    startY: margin + 25,
-    margin: { left: margin, right: margin },
-    styles: {
-      fontSize: 8,
-      cellPadding: 3,
-      lineColor: [80, 80, 80],
-      lineWidth: 0.25,
-      textColor: [0, 0, 0],
-      font: 'helvetica',
-      fontStyle: 'normal'
-    },
-  headStyles: {
-  fillColor: [0, 0, 128], // Navy blue background
-  textColor: [255, 255, 255], // White text
-  fontStyle: 'bold',
-  fontSize: 8,
-  lineWidth: 0.25,
-  lineColor: [80, 80, 80],
-  halign: 'center' // Add this line to center all header text
-},
-    bodyStyles: {
-      fontSize: 9,
-      lineWidth: 0.25,
-      lineColor: [150, 150, 150],
-      textColor: [0, 0, 0]
-    },
-    alternateRowStyles: {
-      fillColor: [245, 245, 245]
-    },
-    // Correct way to highlight rows based on zip status
-    didParseCell: function(data) {
-      // Check if this is a body cell
-      if (data.section === 'body') {
-        const rowData = tableData[data.row.index];
-        const zipStatus = rowData[10]; // Status is now at index 10
-        
-        if (zipStatus === 'PENDING') {
-          // Highlight entire row for pending zips
-          data.cell.styles.fillColor = [255, 240, 240]; // Light red background
-          data.cell.styles.fontStyle = 'bold';
-          
-          // Make the Status column more prominent
-          if (data.column.index === 10) {
-            data.cell.styles.fillColor = [255, 200, 200]; // Darker red
-            data.cell.styles.textColor = [200, 0, 0]; // Red text
-          }
-        } else {
-          // Style for completed zips
-          if (data.column.index === 10) {
-            data.cell.styles.fillColor = [230, 255, 230]; // Light green
-            data.cell.styles.textColor = [0, 100, 0]; // Green text
-            data.cell.styles.fontStyle = 'bold';
-          }
-        }
-        
-        // Style aging column based on days
-        if (data.column.index === 9) { // Aging column
-          const agingDays = parseInt(rowData[9]) || 0;
-          if (agingDays > 14) {
-            data.cell.styles.fillColor = [255, 220, 220]; // Light red for high aging
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.textColor = [150, 0, 0]; // Dark red text
-          } else if (agingDays > 7) {
-            data.cell.styles.fillColor = [255, 245, 220]; // Light yellow for medium aging
-            data.cell.styles.textColor = [120, 80, 0]; // Dark yellow text
-          }
-        }
-
-        // Style cost column for better readability
-        if (data.column.index === 6) { // Cost column
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.textColor = [0, 80, 0]; // Dark green for cost
-        }
-
-        // Style pieces column
-        if (data.column.index === 5) { // Pieces column
-          data.cell.styles.fontStyle = 'bold';
-        }
-      }
-    },
-    columnStyles: {
-      0: { 
-        cellWidth: 15, 
-        halign: 'center',
-        fontStyle: 'bold'
-      },
-      1: { 
-        cellWidth: 20, 
-        fontStyle: 'bold',
-        halign: 'center'
-      },
-      2: { 
-        cellWidth: 35,
-        halign: 'center',
-        halign: 'center'
-      },
-      3: { 
-        cellWidth: 35,
-        halign: 'center'
-      },
-      4: { 
-        cellWidth: 32,
-        halign: 'center'
-      },
-      5: { 
-        cellWidth: 25, 
-        halign: 'center'
-      },
-      6: { 
-        cellWidth: 25, 
-        halign: 'center'
-      },
-      7: { 
-        cellWidth: 25, 
-        halign: 'center'
-      },
-      8: { 
-        cellWidth: 25,
-        halign: 'center'
-      },
-      9: { 
-        cellWidth: 18, 
-        halign: 'center',
-        fontStyle: 'bold'
-      },
-      10: { 
-        cellWidth: 24, 
-        halign: 'center',
-        fontStyle: 'bold'
-      }
-    },
-    tableWidth: 'wrap',
-    showHead: 'firstPage',
-    useCss: false
-  });
-
-  // Add legend for pending zips
-  const finalY = doc.lastAutoTable.finalY || margin + 25;
-  if (finalY < pageHeight - 15) {
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
     doc.setFont('helvetica', 'normal');
-    // doc.text('* Rows highlighted in light red indicate pending zip orders', margin + 5, finalY + 8);
-    // doc.text('* High aging days (>14) are highlighted in light red', margin + 5, finalY + 12);
-  }
+    doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, pageWidth / 2, margin + 16, { align: 'center' });
 
-  // Save with descriptive filename
-  const timestamp = new Date().toISOString().split('T')[0];
-  doc.save(`zip-orders-report-${timestamp}.pdf`);
-};
-  // Get aging color based on days
-  const getAgingColor = (days) => {
-    if (days <= 7) return '#059669'; // Green for 0-7 days
-    if (days <= 14) return '#d97706'; // Amber for 8-14 days
-    if (days <= 30) return '#dc2626'; // Red for 15-30 days
-    return '#7c3aed'; // Purple for more than 30 days
+    const tableData = filteredData.map((row, index) => {
+      const hasPendingDori = !row.hasSupplierEntry || !row.hasMaterialReceived;
+      return [
+        (index + 1).toString(),
+        row['Lot Number'] || '-',
+        row['Garment Type'] || '-',
+        row['Style'] || '-',
+        row['Fabric'] || '-',
+        formatNumber(row['Total Pieces']),
+        formatCurrency(row['Total Cost (₹)']).replace('₹', ''),
+        formatDate(row['Issue Date']),
+        row['Supervisor'] || '-',
+        row.aging?.toString() || '0',
+        hasPendingDori ? 'PENDING' : 'DONE'
+      ];
+    });
+
+    autoTable(doc, {
+      head: [['Sr.No.', 'Lot No.', 'Garment Type', 'Style', 'Fabric', 'Pieces', 'Cost', 'Issue Date', 'Supervisor', 'Aging (Days)', 'Status']],
+      body: tableData,
+      startY: margin + 25,
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 8, cellPadding: 3, textColor: [0, 0, 0] },
+      headStyles: { fillColor: [0, 0, 128], textColor: [255, 255, 255] }
+    });
+
+    doc.save(`dori-orders-summary-report-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
+
+  const matchingLotOrders = useMemo(() => {
+    if (!lotSearchQuery.trim()) return data.slice(0, 8);
+    const q = lotSearchQuery.trim().toLowerCase();
+    return data.filter(r => (r['Lot Number'] || '').toLowerCase().includes(q) || (r['Style'] || '').toLowerCase().includes(q));
+  }, [data, lotSearchQuery]);
 
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
         <div style={styles.spinner}></div>
-        <p style={styles.loadingText}>Loading Purchase Orders Data...</p>
+        <p style={styles.loadingText}>Loading Dori Purchase Orders...</p>
       </div>
     );
   }
@@ -641,32 +858,40 @@ const downloadPDF = () => {
       <div style={styles.errorContainer}>
         <h2 style={styles.errorTitle}>Error Loading Data</h2>
         <p style={styles.errorText}>{error}</p>
-        <button onClick={fetchData} style={styles.retryButton}>
-          Retry
-        </button>
+        <button onClick={fetchData} style={styles.retryButton}>Retry</button>
       </div>
     );
   }
 
   return (
     <div style={styles.dashboard}>
+      {/* Feedback Toast */}
+      {feedbackMessage && (
+        <div style={styles.toast}>
+          {feedbackMessage}
+        </div>
+      )}
+
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
-          <button 
-            onClick={handleBackButton}
-            style={styles.backButton}
-            title="Go back"
-          >
+          <button onClick={handleBackButton} style={styles.backButton} title="Go back">
             ← Back
           </button>
           <div style={styles.headerContent}>
             <h1 style={styles.title}>Dori Purchase Orders Dashboard</h1>
-            <p style={styles.subtitle}>Manage and track all dori material requirements</p>
+            <p style={styles.subtitle}>Manage, track and re-download all DORI material purchase orders</p>
           </div>
         </div>
         <div style={styles.headerActions}>
           <div style={styles.downloadButtons}>
+            <button 
+              onClick={() => setShowLotSearchModal(true)} 
+              style={styles.redownloadHeaderBtn}
+              title="Search lot to re-download DORI PO"
+            >
+              📥 Re-download PO
+            </button>
             <button onClick={downloadPDF} style={styles.pdfButton}>
               📊 PDF Report
             </button>
@@ -689,17 +914,6 @@ const downloadPDF = () => {
             <p style={styles.statLabel}>Total Orders</p>
           </div>
         </div>
-        
-    
-        
-        {/* <div style={styles.statCard}>
-          <div style={styles.statIcon}>⏱️</div>
-          <div style={styles.statContent}>
-            <h3 style={styles.statNumber}>{stats.averageAging}</h3>
-            <p style={styles.statLabel}>Avg. Aging (Days)</p>
-          </div>
-        </div> */}
-        
         <div style={styles.statCard}>
           <div style={styles.statIcon}>✅</div>
           <div style={styles.statContent}>
@@ -707,7 +921,6 @@ const downloadPDF = () => {
             <p style={styles.statLabel}>Gate Entry Done</p>
           </div>
         </div>
-        
         <div style={styles.statCard}>
           <div style={styles.statIcon}>📦</div>
           <div style={styles.statContent}>
@@ -715,7 +928,6 @@ const downloadPDF = () => {
             <p style={styles.statLabel}>Material Received</p>
           </div>
         </div>
-        
         <div style={styles.statCard}>
           <div style={styles.statIcon}>🏢</div>
           <div style={styles.statContent}>
@@ -730,12 +942,10 @@ const downloadPDF = () => {
         <div style={styles.searchBox}>
           <input
             type="text"
-            placeholder="Search across all orders..."
+            placeholder="Search across lot no, style, supervisor..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={styles.searchInput}
-            onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-            onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
           />
         </div>
         
@@ -831,7 +1041,7 @@ const downloadPDF = () => {
       {/* Pagination Controls - Top */}
       <div style={styles.paginationSection}>
         <div style={styles.paginationInfo}>
-          Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} entries
+          Showing {filteredData.length > 0 ? ((currentPage - 1) * itemsPerPage) + 1 : 0} to {Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} entries
         </div>
         <div style={styles.paginationControls}>
           <button
@@ -842,12 +1052,12 @@ const downloadPDF = () => {
             Previous
           </button>
           <span style={styles.pageInfo}>
-            Page {currentPage} of {totalPages}
+            Page {currentPage} of {Math.max(1, totalPages)}
           </span>
           <button
             onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-            disabled={currentPage === totalPages}
-            style={{...styles.paginationButton, ...(currentPage === totalPages ? styles.disabledButton : {})}}
+            disabled={currentPage === totalPages || totalPages === 0}
+            style={{...styles.paginationButton, ...(currentPage === totalPages || totalPages === 0 ? styles.disabledButton : {})}}
           >
             Next
           </button>
@@ -883,6 +1093,7 @@ const downloadPDF = () => {
               <thead>
                 <tr>
                   <th style={styles.tableHeader}>Sr. No.</th>
+                  <th style={{...styles.tableHeader, background: '#e0e7ff', color: '#1e3a8a'}}>Action / Download</th>
                   <th style={styles.tableHeader}>Lot No.</th>
                   <th style={styles.tableHeader}>Garment Type</th>
                   <th style={styles.tableHeader}>Style</th>
@@ -894,33 +1105,57 @@ const downloadPDF = () => {
                   <th style={styles.tableHeader}>Gate Entry</th>
                   <th style={styles.tableHeader}>Material Received</th>
                   <th style={styles.tableHeader}>Supplier</th>
-                  <th style={styles.tableHeader}>Aging (Days)</th>
+                  <th style={styles.tableHeader}>Aging</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedData.map((row, index) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + index;
                   const selectedPlacements = parsePlacements(row['Selected Placements']);
-                  
+                  const isDownloading = downloadingPoId === row.id;
+
                   return (
                     <tr 
                       key={row.id} 
                       style={styles.tableRow}
-                      onMouseEnter={(e) => e.target.parentNode.style.backgroundColor = '#f8fafc'}
-                      onMouseLeave={(e) => e.target.parentNode.style.backgroundColor = '#ffffff'}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
                     >
                       <td style={styles.srNoCell}>
                         <strong>{globalIndex + 1}</strong>
                       </td>
+
+                      {/* ACTION COLUMN FOR REDOWNLOAD PO */}
+                      <td style={styles.actionCell}>
+                        <div style={styles.actionBtnGroup}>
+                          <button
+                            onClick={() => handleDownloadPo(row)}
+                            disabled={isDownloading}
+                            style={{
+                              ...styles.downloadPoBtn,
+                              ...(isDownloading ? styles.downloadPoBtnLoading : {})
+                            }}
+                            title="Re-download Dori Purchase Order PDF"
+                          >
+                            {isDownloading ? '⏳ Making PDF...' : '📥 Download PO'}
+                          </button>
+                          <button
+                            onClick={() => handlePreviewPo(row)}
+                            style={styles.previewPoBtn}
+                            title="Preview PO Details & Print"
+                          >
+                            👁️ View
+                          </button>
+                        </div>
+                      </td>
+
                       <td style={styles.tableCell}>
                         <strong style={styles.lotNumber}>{row['Lot Number']}</strong>
                       </td>
                       <td style={styles.tableCell}>
                         <div style={styles.garmentInfo}>
                           <div style={styles.garmentType}>{row['Garment Type']}</div>
-                          {row['Fabric'] && (
-                            <div style={styles.fabric}>{row['Fabric']}</div>
-                          )}
+                          {row['Fabric'] && <div style={styles.fabric}>{row['Fabric']}</div>}
                         </div>
                       </td>
                       <td style={styles.tableCell}>{row['Style']}</td>
@@ -934,8 +1169,8 @@ const downloadPDF = () => {
                       <td style={styles.tableCell}>{row['Supervisor']}</td>
                       <td style={styles.tableCell}>
                         <div style={styles.zipInfo}>
-                          {selectedPlacements.map(placement => (
-                            <div key={placement} style={styles.placement}>
+                          {selectedPlacements.map((placement, pIdx) => (
+                            <div key={pIdx} style={styles.placement}>
                               {placement}
                             </div>
                           ))}
@@ -1019,12 +1254,12 @@ const downloadPDF = () => {
               Previous
             </button>
             <span style={styles.pageInfo}>
-              Page {currentPage} of {totalPages}
+              Page {currentPage} of {Math.max(1, totalPages)}
             </span>
             <button
               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-              disabled={currentPage === totalPages}
-              style={{...styles.paginationButton, ...(currentPage === totalPages ? styles.disabledButton : {})}}
+              disabled={currentPage === totalPages || totalPages === 0}
+              style={{...styles.paginationButton, ...(currentPage === totalPages || totalPages === 0 ? styles.disabledButton : {})}}
             >
               Next
             </button>
@@ -1032,346 +1267,516 @@ const downloadPDF = () => {
         </div>
       )}
 
-      {/* Add CSS for spinner animation */}
-      <style>
-        {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}
-      </style>
+      {/* LOT SEARCH MODAL FOR QUICK REDOWNLOAD */}
+      {showLotSearchModal && (
+        <div style={styles.modalOverlay} onClick={() => setShowLotSearchModal(false)}>
+          <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>🔍 Quick Search & Re-download Dori PO</h2>
+              <button onClick={() => setShowLotSearchModal(false)} style={styles.modalCloseBtn}>✕</button>
+            </div>
+            <div style={styles.modalBody}>
+              <input
+                type="text"
+                placeholder="Type Lot Number or Style..."
+                value={lotSearchQuery}
+                onChange={e => setLotSearchQuery(e.target.value)}
+                style={styles.modalSearchInput}
+                autoFocus
+              />
+              <div style={styles.modalListContainer}>
+                {matchingLotOrders.length === 0 ? (
+                  <p style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>No matching orders found.</p>
+                ) : (
+                  matchingLotOrders.map(ord => (
+                    <div key={ord.id} style={styles.lotResultCard}>
+                      <div>
+                        <strong style={{ fontSize: '15px', color: '#0369a1' }}>Lot #{ord['Lot Number']}</strong>
+                        <div style={{ fontSize: '13px', color: '#475569', marginTop: '2px' }}>
+                          {ord['Garment Type']} • {ord['Style']} • {formatNumber(ord['Total Pieces'])} pcs
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                          Date: {formatDate(ord['Issue Date'])} | Sup: {ord['Supervisor']}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleDownloadPo(ord)}
+                          style={styles.downloadPoBtn}
+                        >
+                          📥 Download PO
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowLotSearchModal(false);
+                            handlePreviewPo(ord);
+                          }}
+                          style={styles.previewPoBtn}
+                        >
+                          👁️ View
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PO PREVIEW MODAL */}
+      {previewPoData && (
+        <div style={styles.modalOverlay} onClick={() => setPreviewPoData(null)}>
+          <div style={{...styles.modalContent, maxWidth: '800px'}} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>📄 Dori Purchase Order Preview: Lot #{previewPoData['Lot Number']}</h2>
+              <button onClick={() => setPreviewPoData(null)} style={styles.modalCloseBtn}>✕</button>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.previewInfoGrid}>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Lot Number</div>
+                  <div style={styles.previewVal}>{previewPoData['Lot Number']}</div>
+                </div>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Issue Date</div>
+                  <div style={styles.previewVal}>{formatDate(previewPoData['Issue Date'])}</div>
+                </div>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Garment & Style</div>
+                  <div style={styles.previewVal}>{previewPoData['Garment Type']} - {previewPoData['Style']}</div>
+                </div>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Supervisor</div>
+                  <div style={styles.previewVal}>{previewPoData['Supervisor']}</div>
+                </div>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Total Pieces</div>
+                  <div style={styles.previewVal}>{formatNumber(previewPoData['Total Pieces'])}</div>
+                </div>
+                <div style={styles.previewInfoBox}>
+                  <div style={styles.previewLabel}>Total Cost</div>
+                  <div style={{...styles.previewVal, color: '#059669', fontWeight: 'bold'}}>
+                    {formatCurrency(previewPoData['Total Cost (₹)'])}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '20px' }}>
+                <h4 style={{ color: '#0369a1', marginBottom: '8px' }}>Dori Placements & Specifications:</h4>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {parsePlacements(previewPoData['Selected Placements']).map((pl, i) => (
+                    <span key={i} style={styles.placementBadge}>{pl}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginTop: '20px' }}>
+                <h4 style={{ color: '#0369a1', marginBottom: '8px' }}>Color Breakdown:</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+                  {Object.entries(parseColorBreakdown(previewPoData['Color Breakdown'])).map(([c, q], i) => (
+                    <div key={i} style={{ padding: '8px', background: '#f1f5f9', borderRadius: '8px', fontSize: '13px' }}>
+                      <strong>{c}:</strong> {q} pcs
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button onClick={() => setPreviewPoData(null)} style={styles.modalCancelBtn}>Close</button>
+              <button 
+                onClick={() => {
+                  handleDownloadPo(previewPoData);
+                  setPreviewPoData(null);
+                }} 
+                style={styles.modalActionDownloadBtn}
+              >
+                📥 Download Full Dori PO PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Animation Styles */}
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };
 
-// Complete styles
+// Complete modern styles
 const styles = {
   dashboard: {
     padding: '24px',
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    backgroundColor: '#ffffffff',
+    backgroundColor: '#f8fafc',
     minHeight: '100vh',
     color: '#1e293b',
+  },
+  toast: {
+    position: 'fixed',
+    top: '20px',
+    right: '20px',
+    backgroundColor: '#059669',
+    color: '#ffffff',
+    padding: '12px 24px',
+    borderRadius: '10px',
+    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+    zIndex: 9999,
+    fontSize: '14px',
+    fontWeight: '600',
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: '32px',
+    marginBottom: '24px',
     backgroundColor: '#ffffff',
-    padding: '32px',
+    padding: '24px 32px',
     borderRadius: '16px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.08)',
+    border: '1px solid #e2e8f0',
+    flexWrap: 'wrap',
+    gap: '16px'
   },
   headerLeft: {
     display: 'flex',
-    alignItems: 'flex-start',
-    gap: '20px',
+    alignItems: 'center',
+    gap: '16px',
     flex: 1,
+    minWidth: '280px'
   },
   backButton: {
-    padding: '12px 20px',
-    backgroundColor: '#6b7280',
+    padding: '10px 18px',
+    backgroundColor: '#475569',
     color: '#ffffff',
     border: 'none',
-    borderRadius: '10px',
+    borderRadius: '8px',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '600',
     transition: 'all 0.2s ease',
-    boxShadow: '0 2px 4px rgba(107, 114, 128, 0.3)',
-    minWidth: '80px',
-    marginTop: '8px',
   },
   headerContent: {
     flex: 1,
   },
   title: {
-    fontSize: '32px',
+    fontSize: '22px',
     fontWeight: '700',
     color: '#0f172a',
-    margin: '0 0 8px 0',
-    background: 'linear-gradient(135deg, #0d007eff, #00245eff)',
-    WebkitBackgroundClip: 'text',
-    WebkitTextFillColor: 'transparent',
-    backgroundClip: 'text',
+    margin: '0 0 4px 0',
   },
   subtitle: {
-    fontSize: '16px',
-    color: '#000000ff',
-    margin: '0',
-    fontWeight: '500',
+    fontSize: '13px',
+    color: '#64748b',
+    margin: 0,
   },
   headerActions: {
     display: 'flex',
-    gap: '12px',
     alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap'
   },
   downloadButtons: {
     display: 'flex',
-    gap: '10px',
+    gap: '8px',
+    flexWrap: 'wrap'
   },
-  pdfButton: {
-    padding: '12px 16px',
-    backgroundColor: '#dc2626',
+  redownloadHeaderBtn: {
+    padding: '10px 18px',
+    backgroundColor: '#0284c7',
     color: '#ffffff',
     border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
+    boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)',
     transition: 'all 0.2s ease',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  pdfButton: {
+    padding: '10px 16px',
+    backgroundColor: '#4f46e5',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
   },
   excelButton: {
-    padding: '12px 16px',
+    padding: '10px 16px',
     backgroundColor: '#059669',
     color: '#ffffff',
     border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
-    transition: 'all 0.2s ease',
   },
   refreshButton: {
-    padding: '12px 20px',
-    backgroundColor: '#3b82f6',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '10px',
+    padding: '10px 16px',
+    backgroundColor: '#ffffff',
+    color: '#334155',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
-    transition: 'all 0.2s ease',
-    boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
   },
   statsGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '20px',
-    marginBottom: '32px',
+    gap: '16px',
+    marginBottom: '24px',
   },
   statCard: {
-    backgroundColor: '#ffffff',
-    padding: '24px',
-    borderRadius: '12px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
     display: 'flex',
     alignItems: 'center',
+    padding: '18px 20px',
+    backgroundColor: '#ffffff',
+    borderRadius: '12px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+    border: '1px solid #e2e8f0',
     gap: '16px',
-    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
   },
   statIcon: {
-    fontSize: '32px',
-    width: '60px',
-    height: '60px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f1f5f9',
-    borderRadius: '12px',
+    fontSize: '28px',
   },
   statContent: {
     flex: 1,
   },
   statNumber: {
-    fontSize: '28px',
+    fontSize: '22px',
     fontWeight: '700',
     color: '#0f172a',
-    margin: '0 0 4px 0',
-    lineHeight: '1',
+    margin: '0 0 2px 0',
   },
   statLabel: {
-    fontSize: '14px',
-    color: '#004ab3ff',
-    margin: '0',
-    fontWeight: '500',
+    fontSize: '12px',
+    color: '#64748b',
+    margin: 0,
+    fontWeight: '500'
   },
   controlsSection: {
     backgroundColor: '#ffffff',
-    padding: '24px',
+    padding: '20px 24px',
     borderRadius: '12px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
-    marginBottom: '24px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+    border: '1px solid #e2e8f0',
+    marginBottom: '20px',
   },
   searchBox: {
-    marginBottom: '20px',
+    marginBottom: '16px',
   },
   searchInput: {
     width: '100%',
     padding: '12px 16px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '10px',
-    fontSize: '16px',
-    transition: 'border-color 0.2s ease',
+    border: '1.5px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '14px',
+    color: '#1e293b',
     outline: 'none',
-    boxSizing: 'border-box',
+    boxSizing: 'border-box'
   },
   filtersGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '16px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: '12px',
+    alignItems: 'flex-end',
   },
   filterGroup: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '6px',
   },
   filterLabel: {
-    fontSize: '14px',
+    fontSize: '11px',
     fontWeight: '600',
-    color: '#374151',
+    color: '#475569',
+    textTransform: 'uppercase',
   },
   filterSelect: {
-    padding: '10px 12px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '8px',
-    fontSize: '14px',
+    padding: '9px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '13px',
     backgroundColor: '#ffffff',
-    cursor: 'pointer',
-    transition: 'border-color 0.2s ease',
+    color: '#1e293b',
     outline: 'none',
   },
   filterInput: {
-    padding: '10px 12px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '8px',
-    fontSize: '14px',
-    transition: 'border-color 0.2s ease',
+    padding: '8px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '13px',
+    color: '#1e293b',
     outline: 'none',
-    boxSizing: 'border-box',
   },
   clearButton: {
-    padding: '10px 16px',
-    backgroundColor: '#ef4444',
-    color: '#ffffff',
+    padding: '9px 14px',
+    backgroundColor: '#e2e8f0',
+    color: '#475569',
     border: 'none',
-    borderRadius: '8px',
+    borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '12px',
     fontWeight: '600',
-    transition: 'background-color 0.2s ease',
-    marginTop: '8px',
   },
   paginationSection: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    padding: '16px 24px',
-    borderRadius: '12px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
     marginBottom: '16px',
+    flexWrap: 'wrap',
+    gap: '12px',
   },
   paginationInfo: {
+    fontSize: '13px',
     color: '#64748b',
-    fontSize: '14px',
-    fontWeight: '500',
   },
   paginationControls: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
+    gap: '10px',
   },
   paginationButton: {
-    padding: '8px 16px',
-    backgroundColor: '#3b82f6',
-    color: '#ffffff',
-    border: 'none',
+    padding: '7px 14px',
+    backgroundColor: '#ffffff',
+    border: '1px solid #cbd5e1',
     borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '12px',
     fontWeight: '500',
-    transition: 'all 0.2s ease',
   },
   disabledButton: {
-    backgroundColor: '#9ca3af',
+    opacity: 0.5,
     cursor: 'not-allowed',
   },
   pageInfo: {
-    margin: '0 12px',
-    fontSize: '14px',
-    color: '#374151',
-    fontWeight: '500',
+    fontSize: '13px',
+    color: '#475569',
   },
   pageSizeSelect: {
-    padding: '8px 12px',
-    border: '2px solid #e2e8f0',
+    padding: '6px 10px',
+    border: '1px solid #cbd5e1',
     borderRadius: '6px',
-    fontSize: '14px',
+    fontSize: '12px',
     backgroundColor: '#ffffff',
-    cursor: 'pointer',
   },
   tableContainer: {
     backgroundColor: '#ffffff',
     borderRadius: '12px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+    border: '1px solid #e2e8f0',
     overflow: 'hidden',
-    marginBottom: '16px',
+    marginBottom: '20px',
   },
   tableWrapper: {
     overflowX: 'auto',
+    maxHeight: '650px',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
-    fontSize: '14px',
-    minWidth: '1500px',
+    fontSize: '13px',
+    textAlign: 'left',
   },
   tableHeader: {
-    backgroundColor: '#f8fafc',
-    padding: '16px 12px',
-    textAlign: 'left',
-    fontWeight: '600',
-    color: '#060038ff',
-    borderBottom: '2px solid #e2e8f0',
-    fontSize: '13px',
+    backgroundColor: '#f1f5f9',
+    padding: '12px 14px',
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#475569',
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    whiteSpace: 'nowrap',
+    borderBottom: '2px solid #e2e8f0',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    whiteSpace: 'nowrap'
   },
   tableRow: {
-    border: '1px solid #f1f5f9',
-    transition: 'background-color 0.2s ease',
-    backgroundColor: '#ffffff',
+    borderBottom: '1px solid #f1f5f9',
+    transition: 'background-color 0.15s ease',
   },
   srNoCell: {
-    padding: '16px 12px',
-    color: '#000000ff',
-    borderBottom: '1px solid #f1f5f9',
-    verticalAlign: 'top',
+    padding: '14px 12px',
     textAlign: 'center',
-    fontWeight: '600',
-    fontSize: '13px',
+    color: '#64748b',
     backgroundColor: '#f8fafc',
+    fontSize: '12px',
+  },
+  actionCell: {
+    padding: '10px 12px',
+    whiteSpace: 'nowrap',
+    backgroundColor: '#fdfdfe',
+    borderRight: '1px solid #e2e8f0'
+  },
+  actionBtnGroup: {
+    display: 'flex',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  downloadPoBtn: {
+    padding: '7px 12px',
+    backgroundColor: '#0284c7',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: '600',
+    transition: 'all 0.2s ease',
+    whiteSpace: 'nowrap',
+    boxShadow: '0 1px 3px rgba(2, 132, 199, 0.2)'
+  },
+  downloadPoBtnLoading: {
+    backgroundColor: '#7dd3fc',
+    cursor: 'wait'
+  },
+  previewPoBtn: {
+    padding: '7px 10px',
+    backgroundColor: '#f1f5f9',
+    color: '#334155',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: '500',
+    transition: 'all 0.2s ease',
   },
   tableCell: {
-    padding: '16px 12px',
-    color: '#000000ff',
-    border: '1px solid #f1f5f9',
-    verticalAlign: 'top',
+    padding: '14px 12px',
+    color: '#1e293b',
+    borderBottom: '1px solid #f1f5f9',
     whiteSpace: 'nowrap',
   },
   lotNumber: {
-    color: '#0f172a',
-    fontSize: '15px',
-    fontWeight: '600',
+    color: '#0369a1',
+    fontSize: '14px',
+    fontWeight: '700',
   },
   garmentInfo: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '4px',
-    minWidth: '120px',
+    gap: '2px',
   },
   garmentType: {
     fontWeight: '600',
     color: '#0f172a',
   },
   fabric: {
-    fontSize: '12px',
-    color: '#003681ff',
-    fontStyle: 'italic',
+    fontSize: '11px',
+    color: '#64748b',
   },
   cost: {
     color: '#059669',
@@ -1381,63 +1786,68 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '4px',
-    minWidth: '120px',
+    maxWidth: '180px',
   },
   placement: {
-    fontSize: '12px',
-    backgroundColor: '#f1f5f9',
-    padding: '4px 8px',
-    borderRadius: '6px',
-    color: '#000a68ff',
-    textAlign: 'center',
+    fontSize: '11px',
+    backgroundColor: '#e0f2fe',
+    padding: '3px 6px',
+    borderRadius: '4px',
+    color: '#0369a1',
+  },
+  placementBadge: {
+    padding: '6px 12px',
+    backgroundColor: '#e0f2fe',
+    color: '#0369a1',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: '500',
+    border: '1px solid #bae6fd'
   },
   statusCell: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-start',
-    minWidth: '100px',
   },
   statusSuccess: {
     color: '#059669',
-    fontWeight: '500',
-    fontSize: '13px',
+    fontWeight: '600',
+    fontSize: '12px',
   },
   statusPending: {
     color: '#d97706',
     fontWeight: '500',
-    fontSize: '13px',
+    fontSize: '12px',
   },
   smallText: {
-    fontSize: '11px',
-    color: '#6b7280',
-    marginTop: '2px',
+    fontSize: '10px',
+    color: '#64748b',
+    marginTop: '1px',
   },
   agingBadge: {
-    padding: '6px 12px',
-    borderRadius: '20px',
-    fontSize: '12px',
+    padding: '4px 10px',
+    borderRadius: '12px',
+    fontSize: '11px',
     fontWeight: '600',
     textAlign: 'center',
     display: 'inline-block',
-    minWidth: '70px',
   },
   noData: {
-    padding: '60px 20px',
+    padding: '48px 20px',
     textAlign: 'center',
-    color: '#6b7280',
+    color: '#64748b',
   },
   noDataText: {
-    fontSize: '16px',
-    marginBottom: '16px',
+    fontSize: '15px',
+    marginBottom: '12px',
   },
   clearSearchButton: {
-    padding: '10px 20px',
-    backgroundColor: '#3b82f6',
+    padding: '8px 16px',
+    backgroundColor: '#0284c7',
     color: '#ffffff',
     border: 'none',
-    borderRadius: '8px',
+    borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '500',
   },
   loadingContainer: {
@@ -1446,19 +1856,19 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     height: '60vh',
-    color: '#6b7280',
+    color: '#64748b',
   },
   spinner: {
-    border: '4px solid #f3f4f6',
-    borderTop: '4px solid #3b82f6',
+    border: '4px solid #e2e8f0',
+    borderTop: '4px solid #0284c7',
     borderRadius: '50%',
-    width: '40px',
-    height: '40px',
-    animation: 'spin 1s linear infinite',
-    marginBottom: '16px',
+    width: '36px',
+    height: '36px',
+    animation: 'spin 0.8s linear infinite',
+    marginBottom: '12px',
   },
   loadingText: {
-    fontSize: '16px',
+    fontSize: '14px',
     fontWeight: '500',
   },
   errorContainer: {
@@ -1468,23 +1878,149 @@ const styles = {
   },
   errorTitle: {
     color: '#dc2626',
-    marginBottom: '12px',
-    fontSize: '20px',
+    marginBottom: '8px',
+    fontSize: '18px',
   },
   errorText: {
-    marginBottom: '20px',
-    fontSize: '16px',
+    marginBottom: '16px',
+    fontSize: '14px',
   },
   retryButton: {
-    padding: '12px 24px',
-    backgroundColor: '#3b82f6',
+    padding: '10px 20px',
+    backgroundColor: '#0284c7',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    padding: '20px',
+    backdropFilter: 'blur(4px)'
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    width: '100%',
+    maxWidth: '650px',
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  modalHeader: {
+    padding: '20px 24px',
+    borderBottom: '1px solid #e2e8f0',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: '18px',
+    fontWeight: '700',
+    color: '#0f172a',
+    margin: 0,
+  },
+  modalCloseBtn: {
+    background: 'none',
+    border: 'none',
+    fontSize: '20px',
+    cursor: 'pointer',
+    color: '#64748b',
+  },
+  modalBody: {
+    padding: '24px',
+  },
+  modalFooter: {
+    padding: '16px 24px',
+    borderTop: '1px solid #e2e8f0',
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '10px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '0 0 16px 16px',
+  },
+  modalSearchInput: {
+    width: '100%',
+    padding: '12px 16px',
+    border: '1.5px solid #cbd5e1',
+    borderRadius: '8px',
+    fontSize: '14px',
+    boxSizing: 'border-box',
+    marginBottom: '16px',
+    outline: 'none',
+  },
+  modalListContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    maxHeight: '360px',
+    overflowY: 'auto',
+  },
+  lotResultCard: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '14px 16px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '10px',
+    border: '1px solid #e2e8f0',
+  },
+  previewInfoGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '14px',
+  },
+  previewInfoBox: {
+    padding: '12px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '8px',
+    border: '1px solid #e2e8f0',
+  },
+  previewLabel: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    marginBottom: '4px',
+  },
+  previewVal: {
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  modalCancelBtn: {
+    padding: '10px 18px',
+    backgroundColor: '#ffffff',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#475569',
+  },
+  modalActionDownloadBtn: {
+    padding: '10px 20px',
+    backgroundColor: '#0284c7',
     color: '#ffffff',
     border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '600',
-  },
+  }
 };
 
 export default DoriPurchaseDashboard;

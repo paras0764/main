@@ -1091,7 +1091,7 @@ const generateIssuePdf = async (matrix, {
   pendingInfo,
   isPendingOrder = false,
   consignee = ''
-}) => {
+}, skipSave = false) => {
   if (!matrix) return;
 
   const line = 0.9;
@@ -1585,23 +1585,26 @@ const generateIssuePdf = async (matrix, {
   const fname = `Lot_${cleanString(matrix.lotNumber || 'Unknown')}_${isPendingOrder ? 'PENDING_' : ''}PO_${printableDate(issueDate).replace(/\//g, '-')}.pdf`;
   doc.save(fname);
 
-  const saveResult = await saveOrderToSheet(
-    matrix,
-    { 
-      issueDate, 
-      supervisor, 
-      priority,
-      zipSelections,
-      selectedPlacements,
-      placementQuantities,
-      placementZipTypes,
-      zipQualityData,
-      blockedShades,
-      pendingInfo
-    },
-    totalZipCost,
-    isPendingOrder
-  );
+  let saveResult = { success: true, message: 'Saved skipped (Redownload mode)' };
+  if (!skipSave) {
+    saveResult = await saveOrderToSheet(
+      matrix,
+      { 
+        issueDate, 
+        supervisor, 
+        priority,
+        zipSelections,
+        selectedPlacements,
+        placementQuantities,
+        placementZipTypes,
+        zipQualityData,
+        blockedShades,
+        pendingInfo
+      },
+      totalZipCost,
+      isPendingOrder
+    );
+  }
 
   return {
     success: true,
@@ -2059,6 +2062,32 @@ const handleConfirmIssue = async () => {
     await generateFullOrder();
   }
 };
+
+  const handleDirectRedownload = async () => {
+    if (!matrix) return;
+    try {
+      setConfirming(true);
+      await generateIssuePdf(matrix, { 
+        issueDate: issueDate || todayLocalISO(), 
+        supervisor: supervisor || 'Supervisor', 
+        priority: priority || 'Normal',
+        zipSelections: zipSelections || {},
+        selectedPlacements: selectedPlacements || [],
+        placementQuantities: placementQuantities || {},
+        placementZipTypes: placementZipTypes || {},
+        zipQualityData: zipQualityData || [],
+        blockedShades: blockedShades || new Set(),
+        pendingInfo: pendingInfo,
+        isPendingOrder: false
+      }, true);
+      alert(`✅ Purchase Order for Lot ${matrix.lotNumber} re-downloaded successfully!`);
+    } catch (err) {
+      console.error('Error re-downloading PO:', err);
+      alert(`❌ Failed to re-download PO: ${err.message}`);
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const displaySizes = useMemo(() => {
     if (!matrix) return [];
@@ -2933,7 +2962,7 @@ const handleConfirmIssue = async () => {
                 <div className="SummaryItem"><div className="SummaryLabel">Sizes</div><div className="SummaryValue">{matrix.sizes.length}</div></div>
               </div>
 
-              <div className="ActionsRow">
+              <div className="ActionsRow" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 <motion.button
                   className="BaseBtn PrimaryBtn"
                   type="button"
@@ -2942,6 +2971,19 @@ const handleConfirmIssue = async () => {
                   whileHover={{ scale: 1.02 }}
                 >
                   <FiDownload /> Generate PDF
+                </motion.button>
+
+                <motion.button
+                  className="BaseBtn GhostBtn"
+                  type="button"
+                  onClick={handleDirectRedownload}
+                  disabled={confirming}
+                  whileTap={{ scale: 0.98 }}
+                  whileHover={{ scale: 1.02 }}
+                  title="Re-download PDF without re-submitting to sheet"
+                  style={{ borderColor: '#003f88', color: '#003f88' }}
+                >
+                  <FiDownload /> Re-download PO
                 </motion.button>
               </div>
             </div>
