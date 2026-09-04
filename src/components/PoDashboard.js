@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import "./PoDashboard.css";
+
 import {
   generatePurchaseOrderPDF,
   downloadPdfBlob,
   buildPoQrUrls,
   toDataURL_QR
 } from "./PurchaseOrderForm";
+
+import {
+  GOOGLE_API_KEY,
+  SHEET_ID_PURCHASE_ORDER,
+  WEB_APP_URL_PO_DASHBOARD
+} from "../config/apiConfig";
 
 // Local Storage Keys
 const PO_DASH_KEYS = {
@@ -16,12 +23,6 @@ const PO_DASH_KEYS = {
   GST_PERCENTAGE: "po_dash_gst_percentage",
   SHADE_ENABLED: "po_dash_shade_enabled"
 };
-
-import {
-  GOOGLE_API_KEY,
-  SHEET_ID_PURCHASE_ORDER,
-  WEB_APP_URL_PO_DASHBOARD
-} from "../config/apiConfig";
 
 // Default Values
 const DEFAULT_API_KEY = GOOGLE_API_KEY;
