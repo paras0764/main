@@ -7,8 +7,10 @@ import {
   WEB_APP_URL
 } from "./FabricRgpform";
 
-const HARDCODED_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const DEFAULT_SPREADSHEET_ID = "1BZ-ufmxeqa9XdU-jkuIgeNxHvhnYKjWj4UpnI3bHJKo";
+import { GOOGLE_API_KEY, DEFAULT_RGP_SPREADSHEET_IDS } from "../config/apiConfig";
+
+const HARDCODED_API_KEY = GOOGLE_API_KEY;
+const DEFAULT_SPREADSHEET_IDS = DEFAULT_RGP_SPREADSHEET_IDS;
 
 function normalizeRgpNo(val) {
   return String(val || "")
@@ -27,7 +29,7 @@ function parseRgpSeq(val) {
 }
 
 export default function RedownloadRgp({
-  spreadsheetId = DEFAULT_SPREADSHEET_ID,
+  spreadsheetId,
   apiKey = HARDCODED_API_KEY,
   onBack
 }) {
@@ -45,64 +47,81 @@ export default function RedownloadRgp({
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
 
-  // Fetch all Fabric_RGP & Fabric_RGP_Items on load
+  // Fetch all Fabric_RGP & Fabric_RGP_Items from all sheets on load
   const fetchAllData = async () => {
     setLoading(true);
     setError("");
     try {
-      const mainUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
-        "Fabric_RGP!A1:Z"
-      )}?key=${apiKey}`;
-      const itemsUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
-        "Fabric_RGP_Items!A1:Z"
-      )}?key=${apiKey}`;
+      const ids = spreadsheetId ? [spreadsheetId] : DEFAULT_SPREADSHEET_IDS;
+      const allMain = [];
+      const allItems = [];
 
-      const [mainRes, itemsRes] = await Promise.all([
-        fetch(mainUrl),
-        fetch(itemsUrl)
-      ]);
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const mainUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(
+              "Fabric_RGP!A1:Z"
+            )}?key=${apiKey}`;
+            const itemsUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(
+              "Fabric_RGP_Items!A1:Z"
+            )}?key=${apiKey}`;
 
-      if (!mainRes.ok) {
-        const text = await mainRes.text();
-        throw new Error(`Failed to fetch Fabric_RGP sheet (${mainRes.status}): ${text.slice(0, 150)}`);
-      }
+            const [mainRes, itemsRes] = await Promise.all([
+              fetch(mainUrl),
+              fetch(itemsUrl)
+            ]);
 
-      const mainJson = await mainRes.json();
-      const mainRows = mainJson.values || [];
-      if (mainRows.length === 0) {
-        throw new Error("Fabric_RGP sheet is empty");
-      }
+            if (mainRes.ok) {
+              const mainJson = await mainRes.json();
+              const mainRows = mainJson.values || [];
+              if (mainRows.length > 1) {
+                const mainHeaders = mainRows[0].map((h) => String(h || "").trim());
+                const parsed = mainRows.slice(1).map((row) => {
+                  const obj = {};
+                  mainHeaders.forEach((hdr, idx) => {
+                    obj[hdr] = row[idx] !== undefined ? String(row[idx]).trim() : "";
+                  });
+                  return obj;
+                }).filter(r => r["RGP No"] || r["RGP No."]);
+                allMain.push(...parsed);
+              }
+            }
 
-      const mainHeaders = mainRows[0].map((h) => String(h || "").trim());
-      const parsedMain = mainRows.slice(1).map((row) => {
-        const obj = {};
-        mainHeaders.forEach((hdr, idx) => {
-          obj[hdr] = row[idx] !== undefined ? String(row[idx]).trim() : "";
-        });
-        return obj;
-      }).filter(r => r["RGP No"] || r["RGP No."]);
+            if (itemsRes.ok) {
+              const itemsJson = await itemsRes.json();
+              const itemsRows = itemsJson.values || [];
+              if (itemsRows.length > 1) {
+                const itemsHeaders = itemsRows[0].map((h) => String(h || "").trim());
+                const parsed = itemsRows.slice(1).map((row) => {
+                  const obj = {};
+                  itemsHeaders.forEach((hdr, idx) => {
+                    obj[hdr] = row[idx] !== undefined ? String(row[idx]).trim() : "";
+                  });
+                  return obj;
+                }).filter(r => r["RGP No"] || r["RGP No."]);
+                allItems.push(...parsed);
+              }
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch sheet ${id}:`, e);
+          }
+        })
+      );
 
-      let parsedItems = [];
-      if (itemsRes.ok) {
-        const itemsJson = await itemsRes.json();
-        const itemsRows = itemsJson.values || [];
-        if (itemsRows.length > 0) {
-          const itemsHeaders = itemsRows[0].map((h) => String(h || "").trim());
-          parsedItems = itemsRows.slice(1).map((row) => {
-            const obj = {};
-            itemsHeaders.forEach((hdr, idx) => {
-              obj[hdr] = row[idx] !== undefined ? String(row[idx]).trim() : "";
-            });
-            return obj;
-          }).filter(r => r["RGP No"] || r["RGP No."]);
-        }
-      }
+      // Deduplicate main records by RGP No
+      const seen = new Set();
+      const uniqueMain = allMain.filter((r) => {
+        const key = normalizeRgpNo(r["RGP No"] || r["RGP No."]);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
 
-      setRgpMainData(parsedMain);
-      setRgpItemsData(parsedItems);
+      setRgpMainData(uniqueMain);
+      setRgpItemsData(allItems);
 
-      if (parsedMain.length > 0) {
-        setSelectedRgpNo(parsedMain[parsedMain.length - 1]["RGP No"] || parsedMain[parsedMain.length - 1]["RGP No."]);
+      if (uniqueMain.length > 0) {
+        setSelectedRgpNo(uniqueMain[0]["RGP No"] || uniqueMain[0]["RGP No."]);
       }
     } catch (err) {
       console.error("Error fetching RGP sheets:", err);

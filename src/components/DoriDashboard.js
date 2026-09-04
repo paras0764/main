@@ -3,12 +3,18 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import QRCode from 'qrcode';
 
+import {
+  SHEET_ID_DORI,
+  GOOGLE_API_KEY,
+  WEB_APP_URL_DORI
+} from '../config/apiConfig';
+
 // Google Sheets Configuration for DORI
-const SPREADSHEET_ID = '1LjwZqU26F0xwL1tEyps8txsM1qS8LLUuE-sy_4CQK6k';
-const API_KEY = 'AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk';
+const SPREADSHEET_ID = SHEET_ID_DORI;
+const API_KEY = GOOGLE_API_KEY;
 const PURCHASE_ORDERS_RANGE = 'DoriPurchaseOrders!A:V';
 const DORI_DATA_RANGE = 'DoriData!A:C';
-const QR_SYSTEM_URL = 'https://script.google.com/macros/s/AKfycbxBfA7maSXGPVW3I_HkRpL27l6nC_CgkHip4KYOEpMsdFHcsPTUuiYp0OuFz4_y3zZq/exec';
+const QR_SYSTEM_URL = WEB_APP_URL_DORI;
 
 // Helper functions
 const formatDate = (dateString) => {

@@ -3,18 +3,30 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { jsPDF } from "jspdf";
 import "./PurchaseOrderForm.css";
 
+import {
+  GOOGLE_API_KEY,
+  SHEET_ID_PURCHASE_ORDER,
+  WEB_APP_URL_PO_DASHBOARD,
+  WEB_APP_URL_PO_TRACKING
+} from "../config/apiConfig";
+
 /** =========================
  * CONFIG
  * ========================= */
-const WEB_APP_BASE =
-  "https://script.google.com/macros/s/AKfycbydY5UUXgbyseONnQvnrWldDpmxzRH_m9crbMMhyTapZZ4flbV6AztESNjmusoH1xAluA/exec";
+const WEB_APP_BASE = WEB_APP_URL_PO_DASHBOARD;
 
-const SHEET_ID = "1hy43mDxXtGVq4jeMV_NxX25Q7tnX55NnplN7eqpT74k";
+const SHEET_ID = SHEET_ID_PURCHASE_ORDER;
 const RANGE_A1 = "SHEET1!A1:C";
-const API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
+const API_KEY = GOOGLE_API_KEY;
 
 // Add PO Data Range - Adjust this based on your sheet structure
 const PO_DATA_RANGE = "PO_Items!A:I"; // Change this to your actual PO data sheet name and range
+
+// Dedicated PO Index Tracker Configuration (Separate Tracking Record)
+const TRACK_PO_WEB_APP = WEB_APP_URL_PO_TRACKING;
+const TRACK_PO_SHEET_ID = "";
+const TRACK_PO_RANGE_A1 = "Sheet1!A1:E";
+const TRACK_PO_API_KEY = GOOGLE_API_KEY;
 
 /** =========================
  * Local Storage Keys
@@ -26,6 +38,8 @@ const LOCAL_STORAGE_KEYS = {
   GST_ENABLED: "po_gst_enabled",
   GST_PERCENTAGE: "po_gst_percentage",
   LAST_PO_NUMBER: "po_last_number", // Store last loaded PO number
+  // NEW: Key to track the latest sequential auto-increment PO counter
+  LAST_PO_SEQUENCE: "po_last_sequence_num",
   // New keys for approval dropdowns
   REQUISITION_NAMES: "po_requisition_names",
   PREPARED_NAMES: "po_prepared_names",
@@ -46,13 +60,130 @@ const fmtMoney = (n) =>
     maximumFractionDigits: 2,
   });
 
-// Enhanced PO Number Generation with timestamp for guaranteed uniqueness
-function makeUniquePoNumber() {
-  const now = new Date();
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  const seconds = String(now.getSeconds()).padStart(2, "0");
-  return `PO-${hours}${minutes}${seconds}`;
+/**
+ * ============================================================================
+ * CONTINUOUS UNBROKEN SEQUENTIAL PO GENERATOR (PO-0001 -> PO-0002 -> PO-0003 ...)
+ * ============================================================================
+ * - Always uses 4 digits (e.g. PO-0001, PO-0002), NEVER 5 digits (00001).
+ * - Finds the earliest available sequential number in sequence (1, 2, 3, 4...).
+ * - Prevents jumps (e.g. jumping from PO-0001 to PO-0006 is blocked; next is strictly PO-0002).
+ * ============================================================================
+ */
+function getNextPoNumber(existingPoList = []) {
+  try {
+    const takenNumbers = new Set();
+
+    // Helper to safely parse PO numbers in the range 1-10000
+    const parseSequentialPo = (val) => {
+      if (!val) return null;
+      // Match PO-0001 up to PO-10000 (1 to 4 digits, or 10000)
+      const m = String(val).trim().match(/^PO-0*([1-9]\d{0,3}|10000)$/i);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n) && n >= 1 && n <= 10000) return n;
+      }
+      return null;
+    };
+
+    // 1. Collect all taken sequential numbers from Google Sheet records
+    if (Array.isArray(existingPoList)) {
+      existingPoList.forEach((po) => {
+        const num = parseSequentialPo(po);
+        if (num !== null) {
+          takenNumbers.add(num);
+        }
+      });
+    }
+
+    // 2. Collect confirmed saved sequence number from localStorage
+    const rawStored = localStorage.getItem(LOCAL_STORAGE_KEYS.LAST_PO_SEQUENCE);
+    if (rawStored) {
+      try {
+        const parsed = JSON.parse(rawStored);
+        const storedNum = parseInt(parsed, 10);
+        if (!isNaN(storedNum) && storedNum >= 1 && storedNum <= 10000) {
+          takenNumbers.add(storedNum);
+        }
+      } catch {
+        const storedNum = parseInt(rawStored, 10);
+        if (!isNaN(storedNum) && storedNum >= 1 && storedNum <= 10000) {
+          takenNumbers.add(storedNum);
+        }
+      }
+    }
+
+    // 3. Find the lowest unused sequential number (1, 2, 3... without skipping or jumping)
+    let nextNum = 1;
+    for (let i = 1; i <= 10000; i++) {
+      if (!takenNumbers.has(i)) {
+        nextNum = i;
+        break;
+      }
+    }
+
+    // 4. Strictly format as 4 digits for 1-9999 (PO-0001, PO-0002) and 5 digits for 10000 (PO-10000)
+    // NEVER formats as 5 digits (00001) for numbers below 10000
+    const padded = nextNum === 10000 ? "10000" : String(nextNum).padStart(4, "0");
+    return `PO-${padded}`;
+  } catch (err) {
+    console.error("Error calculating next PO number:", err);
+    return "PO-0001";
+  }
+}
+
+// Fallback alias for backwards compatibility
+function makeUniquePoNumber(existingPoList = []) {
+  return getNextPoNumber(existingPoList);
+}
+
+/**
+ * ============================================================================
+ * PO INDEX TRACKER: Updates Start (PO-0001), End (PO-10000), Next PO (PO-0002...)
+ * ============================================================================
+ * Automatically synchronizes PO sequence indexing with the separate tracking sheet
+ * (TRACK_PO_SHEET_ID) without altering the main PO items sheet.
+ * ============================================================================
+ */
+async function updatePoIndexTracker(lastIssuedPo = "", nextPo = "") {
+  try {
+    const startPoint = "PO-0001";
+    const endPoint = "PO-10000";
+    const calculatedNext = nextPo || "PO-0002";
+    
+    const payload = {
+      action: "update_po_tracker",
+      type: "PO_INDEX_TRACKER",
+      poStart: startPoint,
+      poEnd: endPoint,
+      poNext: calculatedNext,
+      lastIssuedPo: lastIssuedPo || "-",
+      timestamp: new Date().toISOString(),
+      dateStr: new Date().toLocaleString(),
+      // 5-Column index record: [PO Start, PO End, PO Next, Last Issued PO, Updated At]
+      row: [
+        startPoint,
+        endPoint,
+        calculatedNext,
+        lastIssuedPo || "-",
+        new Date().toLocaleString()
+      ]
+    };
+
+    // Only include sheetId if it looks like a valid 30+ character Google Sheet ID
+    if (TRACK_PO_SHEET_ID && TRACK_PO_SHEET_ID.length > 25 && !TRACK_PO_SHEET_ID.includes(" ")) {
+      payload.sheetId = TRACK_PO_SHEET_ID;
+    }
+    if (TRACK_PO_RANGE_A1) {
+      payload.range = TRACK_PO_RANGE_A1;
+    }
+
+    const res = await postPOToSheet(TRACK_PO_WEB_APP, payload);
+    console.log("PO Index Tracker updated successfully:", res);
+    return res;
+  } catch (err) {
+    console.warn("PO Index Tracker update notice:", err);
+    return { ok: false, error: String(err) };
+  }
 }
 
 const blankRow = () => ({ 
@@ -110,83 +241,105 @@ async function fetchSheetRows(sheetId, rangeA1, apiKey) {
   return rows;
 }
 
-// NEW: Function to fetch PO data by PO number
+// Enhanced: Function to fetch complete PO data (items + master header details)
 async function fetchPODataByNumber(poNumber, sheetId, apiKey) {
   try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+    const cleanTarget = String(poNumber || "").trim().toUpperCase();
+    if (!cleanTarget) throw new Error("Please provide a valid PO Number");
+
+    // 1. Fetch line items from PO_Items
+    const urlItems = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
       PO_DATA_RANGE
     )}?key=${apiKey}`;
     
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Sheets API error: ${resp.status}`);
+    const respItems = await fetch(urlItems);
+    if (!respItems.ok) throw new Error(`Sheets API error (Items): ${respItems.status}`);
     
-    const data = await resp.json();
-    const values = data.values || [];
+    const dataItems = await respItems.json();
+    const valuesItems = dataItems.values || [];
     
-    if (values.length < 2) {
-      throw new Error("No data found in PO sheet");
+    if (valuesItems.length < 2) {
+      throw new Error("No data found in PO_Items sheet");
     }
     
-    // Parse headers
-    const headers = values[0];
-    const poNumberColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("po") || 
-      h?.toLowerCase().includes("po number") ||
-      h === "PO #"
-    );
+    // Parse item headers
+    const headers = valuesItems[0].map(h => String(h || "").trim().toLowerCase());
+    const poNumberColIndex = headers.findIndex(h => h.includes("po") || h === "po #");
+    const lineColIndex = headers.findIndex(h => h.includes("line"));
+    const deptColIndex = headers.findIndex(h => h.includes("department") || h.includes("dept"));
+    const descColIndex = headers.findIndex(h => h.includes("description") || h.includes("item"));
+    const shadeColIndex = headers.findIndex(h => h.includes("shade"));
+    const uomColIndex = headers.findIndex(h => h.includes("uom") || h.includes("unit"));
+    const qtyColIndex = headers.findIndex(h => h.includes("qty") || h.includes("quantity"));
+    const rateColIndex = headers.findIndex(h => h.includes("rate") || h.includes("price"));
     
-    const lineColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("line") || 
-      h?.toLowerCase().includes("line #")
-    );
-    
-    const deptColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("department") || 
-      h?.toLowerCase().includes("dept")
-    );
-    
-    const descColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("description") || 
-      h?.toLowerCase().includes("item")
-    );
-    
-    const uomColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("uom") || 
-      h?.toLowerCase().includes("unit")
-    );
-    
-    const qtyColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("qty") || 
-      h?.toLowerCase().includes("quantity")
-    );
-    
-    const rateColIndex = headers.findIndex(h => 
-      h?.toLowerCase().includes("rate") || 
-      h?.toLowerCase().includes("price")
-    );
-    
-    // Find all rows matching the PO number
     const matchingRows = [];
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      if (row[poNumberColIndex] === poNumber) {
+    for (let i = 1; i < valuesItems.length; i++) {
+      const row = valuesItems[i];
+      if (String(row[poNumberColIndex] || "").trim().toUpperCase() === cleanTarget) {
         matchingRows.push({
-          line: row[lineColIndex] || i,
-          department: row[deptColIndex] || "",
-          description: row[descColIndex] || "",
-          uom: row[uomColIndex] || "",
-          qty: parseFloat(row[qtyColIndex]) || 0,
-          rate: parseFloat(row[rateColIndex]) || 0,
-          amount: parseFloat(row[qtyColIndex] || 0) * parseFloat(row[rateColIndex] || 0),
+          line: row[lineColIndex] || (matchingRows.length + 1),
+          department: deptColIndex >= 0 ? row[deptColIndex] || "" : "",
+          description: descColIndex >= 0 ? row[descColIndex] || "" : "",
+          shade: shadeColIndex >= 0 ? row[shadeColIndex] || "" : "",
+          uom: uomColIndex >= 0 ? row[uomColIndex] || "" : "",
+          qty: qtyColIndex >= 0 ? parseFloat(row[qtyColIndex]) || 0 : 0,
+          rate: rateColIndex >= 0 ? parseFloat(row[rateColIndex]) || 0 : 0,
+          amount: (parseFloat(row[qtyColIndex] || 0) || 0) * (parseFloat(row[rateColIndex] || 0) || 0),
         });
       }
     }
+
+    // 2. Fetch Header / Master metadata from PO_Main
+    let masterData = {};
+    try {
+      const urlMaster = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/PO_Main!A:Z?key=${apiKey}`;
+      const respMaster = await fetch(urlMaster);
+      if (respMaster.ok) {
+        const dataMaster = await respMaster.json();
+        const valuesMaster = dataMaster.values || [];
+        if (valuesMaster.length > 1) {
+          const mHeaders = valuesMaster[0].map(h => String(h || "").trim().toLowerCase());
+          const mPoCol = mHeaders.findIndex(h => h.includes("po") || h === "po #");
+          const mSuppCol = mHeaders.findIndex(h => h.includes("supplier"));
+          const mODateCol = mHeaders.findIndex(h => h.includes("order date"));
+          const mOTimeCol = mHeaders.findIndex(h => h.includes("order time"));
+          const mEDateCol = mHeaders.findIndex(h => h.includes("expected date"));
+          const mETimeCol = mHeaders.findIndex(h => h.includes("expected time"));
+          const mReqCol = mHeaders.findIndex(h => h.includes("requisition"));
+          const mSupCol = mHeaders.findIndex(h => h.includes("supervisor"));
+          const mAuthCol = mHeaders.findIndex(h => h.includes("authorized") || h.includes("approved"));
+
+          for (let i = 1; i < valuesMaster.length; i++) {
+            const mRow = valuesMaster[i];
+            if (String(mRow[mPoCol] || "").trim().toUpperCase() === cleanTarget) {
+              masterData = {
+                supplier: mSuppCol >= 0 ? mRow[mSuppCol] || "" : "",
+                orderDate: mODateCol >= 0 ? mRow[mODateCol] || "" : "",
+                orderTime: mOTimeCol >= 0 ? mRow[mOTimeCol] || "" : "",
+                expectedDate: mEDateCol >= 0 ? mRow[mEDateCol] || "" : "",
+                expectedTime: mETimeCol >= 0 ? mRow[mETimeCol] || "" : "",
+                requisitionRaisedBy: mReqCol >= 0 ? mRow[mReqCol] || "" : "",
+                preparedBy: mSupCol >= 0 ? mRow[mSupCol] || "" : "",
+                approvedBy: mAuthCol >= 0 ? mRow[mAuthCol] || "" : "",
+              };
+              break;
+            }
+          }
+        }
+      }
+    } catch (mErr) {
+      console.warn("Could not load PO_Main master details:", mErr);
+    }
     
-    if (matchingRows.length === 0) {
+    if (matchingRows.length === 0 && !masterData.supplier) {
       throw new Error(`No data found for PO number: ${poNumber}`);
     }
     
-    return matchingRows;
+    return {
+      items: matchingRows,
+      master: masterData
+    };
   } catch (error) {
     console.error("Error fetching PO data:", error);
     throw error;
@@ -539,7 +692,7 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
 
     (function drawTopSection() {
       const innerW = page.w - 2 * page.m;
-      const rPO = 0.44, rSup = 0.26, rGate = 0.30;
+      const rPO = 0.40, rSup = 0.32, rGate = 0.28;
       const wAvail = innerW - page.gap * 2;
       const wPO = Math.floor(wAvail * rPO);
       const wSup = Math.floor(wAvail * rSup);
@@ -575,7 +728,7 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
       const supPad = 12;
       const supBodyW = wSup - supPad * 2;
       const supLines = [
-        payload.supplierName || "",
+        ...wrap(payload.supplierName || "", supBodyW),
         ...wrap(payload.supplierAddress || "", supBodyW),
         ...(payload.supplierPhone ? [`Phone: ${payload.supplierPhone}`] : []),
         ...(payload.supplierEmail ? [`Email: ${payload.supplierEmail}`] : []),
@@ -797,18 +950,22 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
     drawTableHeader();
   }
   
+  const qtyColIndex = cols.findIndex(col => col.key === "qty");
+  const amountColIndex = cols.findIndex(col => col.key === "amount");
+  const splitColX = amountColIndex >= 0 ? xs[amountColIndex] : (rateColIndex >= 0 ? xs[rateColIndex] : xs[xs.length - 1] - 110);
+
   // Draw TOTAL QUANTITY row
   doc.setDrawColor(0, 0, 0);
   drawRect(x0, y, innerW, subtotalH);
-  // Add vertical lines for the row
-  for (let i = 1; i < xs.length - 1; i++) {
-    doc.setDrawColor(0, 0, 0);
-    line(xs[i], y, xs[i], y + subtotalH);
+  if (qtyColIndex >= 0) {
+    line(xs[qtyColIndex], y, xs[qtyColIndex], y + subtotalH);
+    line(xs[qtyColIndex + 1], y, xs[qtyColIndex + 1], y + subtotalH);
+  }
+  if (amountColIndex >= 0) {
+    line(xs[amountColIndex], y, xs[amountColIndex], y + subtotalH);
   }
   setSize(12); bold();
   text("TOTAL QTY", x0 + 10, y + 18);
-  // Find the QTY column index
-  const qtyColIndex = cols.findIndex(col => col.key === "qty");
   if (qtyColIndex >= 0) {
     rtext(totalQty.toLocaleString(), xs[qtyColIndex + 1] - 10, y + 18);
   }
@@ -818,10 +975,7 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
   // Draw SUBTOTAL row (for amounts)
   doc.setDrawColor(0, 0, 0);
   drawRect(x0, y, innerW, subtotalH);
-  if (rateColIndex >= 0) {
-    doc.setDrawColor(0, 0, 0);
-    line(xs[rateColIndex], y, xs[rateColIndex], y + subtotalH);
-  }
+  line(splitColX, y, splitColX, y + subtotalH);
   setSize(12); bold();
   text("SUBTOTAL", x0 + 10, y + 18);
   rtext(money(totalSum), xs[xs.length - 1] - 10, y + 18);
@@ -831,10 +985,7 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
   if (gstEnabled && !isSupplierCopy) {
     doc.setDrawColor(0, 0, 0);
     drawRect(x0, y, innerW, subtotalH);
-    if (rateColIndex >= 0) {
-      doc.setDrawColor(0, 0, 0);
-      line(xs[rateColIndex], y, xs[rateColIndex], y + subtotalH);
-    }
+    line(splitColX, y, splitColX, y + subtotalH);
     setSize(12); bold();
     text(`GST ${gstPercentage}%`, x0 + 10, y + 18);
     rtext(money(finalGstAmount), xs[xs.length - 1] - 10, y + 18);
@@ -845,10 +996,7 @@ export function generatePurchaseOrderPDF({ payload, options = {} }) {
   const totalH = 30;
   doc.setDrawColor(0, 0, 0);
   drawRect(x0, y, innerW, totalH);
-  if (rateColIndex >= 0) {
-    doc.setDrawColor(0, 0, 0);
-    line(xs[rateColIndex], y, xs[rateColIndex], y + totalH);
-  }
+  line(splitColX, y, splitColX, y + totalH);
   setSize(14); bold();
   const totalLabel = (gstEnabled && !isSupplierCopy) ? "GRAND TOTAL" : "TOTAL";
   text(totalLabel, x0 + 10, y + 20);
@@ -1065,7 +1213,8 @@ export default function PurchaseOrderForm({
   onSave = (po) => console.log("SAVE →", po),
   onSubmitForApproval = (po) => console.log("SUBMIT →", po),
 }) {
-  const [poNumber, setPoNumber] = useState(makeUniquePoNumber());
+  // NEW: Initial PO Number starts with auto-increment sequence (e.g. PO-0001)
+  const [poNumber, setPoNumber] = useState(() => getNextPoNumber([]));
   const [orderDate, setOrderDate] = useState(todayISO());
   const [orderTime, setOrderTime] = useState(nowTime());
   const [expectedDate, setExpectedDate] = useState("");
@@ -1154,14 +1303,23 @@ export default function PurchaseOrderForm({
     try {
       const poNumbers = await fetchAllPONumbers(SHEET_ID, API_KEY);
       setAvailablePONumbers(poNumbers);
+      // NEW: Update PO Number with next sequential number based on existing sheet data
+      if (poNumbers && poNumbers.length > 0) {
+        const nextPoNum = getNextPoNumber(poNumbers);
+        setPoNumber(nextPoNum);
+        // Find latest issued PO
+        const lastIssued = poNumbers.find(p => /^PO-0*([1-9]\d{0,3}|10000)$/i.test(p)) || "";
+        updatePoIndexTracker(lastIssued, nextPoNum);
+      }
     } catch (error) {
       console.error("Error loading PO numbers:", error);
     }
   }
 
-  // Function to load PO data
+  // Function to load complete PO data
   async function handleLoadPO() {
-    if (!searchPoNumber.trim()) {
+    const targetPo = searchPoNumber.trim();
+    if (!targetPo) {
       setLoadError("Please enter a PO number");
       return;
     }
@@ -1170,21 +1328,40 @@ export default function PurchaseOrderForm({
     setLoadError("");
     
     try {
-      const poData = await fetchPODataByNumber(searchPoNumber, SHEET_ID, API_KEY);
+      const poData = await fetchPODataByNumber(targetPo, SHEET_ID, API_KEY);
       
-      if (poData && poData.length > 0) {
-        const loadedRows = poData.map(item => ({
-          department: item.department || "",
-          description: item.description || "",
-          shade: "",
-          uom: item.uom || "",
-          qty: item.qty || 0,
-          rate: item.rate || 0
-        }));
+      const loadedItems = poData.items || (Array.isArray(poData) ? poData : []);
+      const master = poData.master || {};
+
+      if (loadedItems.length > 0 || master.supplier) {
+        // 1. Populate item rows
+        if (loadedItems.length > 0) {
+          const loadedRows = loadedItems.map((item, idx) => ({
+            department: item.department || "",
+            description: item.description || "",
+            shade: item.shade || "",
+            uom: item.uom || "",
+            qty: item.qty || 0,
+            rate: item.rate || 0
+          }));
+          setRows(loadedRows);
+        }
+
+        // 2. Populate header details while keeping the new consecutive PO number
+        const nextSequentialPo = getNextPoNumber(availablePONumbers);
+        setPoNumber(nextSequentialPo);
         
-        setRows(loadedRows);
-        setLocalStorageItem(LOCAL_STORAGE_KEYS.LAST_PO_NUMBER, searchPoNumber);
-        alert(`Successfully loaded PO ${searchPoNumber} with ${poData.length} items`);
+        if (master.supplier) setSupplierName(master.supplier);
+        setOrderDate(todayISO());
+        setOrderTime(nowTime());
+        if (master.expectedDate) setExpectedDate(master.expectedDate);
+        if (master.expectedTime) setExpectedTime(master.expectedTime);
+        if (master.requisitionRaisedBy) setRequisitionRaisedBy(master.requisitionRaisedBy);
+        if (master.preparedBy) setPreparedBy(master.preparedBy);
+        if (master.approvedBy) setApprovedBy(master.approvedBy);
+        
+        setLocalStorageItem(LOCAL_STORAGE_KEYS.LAST_PO_NUMBER, targetPo);
+        alert(`Successfully loaded details from ${targetPo} into New ${nextSequentialPo} with ${loadedItems.length} items ✅`);
         setShowLoadDialog(false);
         setSearchPoNumber("");
       } else {
@@ -1298,13 +1475,33 @@ export default function PurchaseOrderForm({
   const removeRow = (idx) =>
     setRows((r) => (r.length === 1 ? [blankRow()] : r.filter((_, i) => i !== idx)));
 
-  // Enhanced validation with required fields
+  // Helper to check if a PO number already exists in Google Sheet records
+  const isDuplicatePo = (testPo) => {
+    if (!testPo || !testPo.trim()) return false;
+    const cleanTest = testPo.trim().toUpperCase();
+    if (Array.isArray(availablePONumbers)) {
+      return availablePONumbers.some((p) => String(p).trim().toUpperCase() === cleanTest);
+    }
+    return false;
+  };
+
+  // Enhanced validation with required fields, duplicate check, and strict sequence check
   const validate = () => {
     const errs = [];
+    const expectedPo = getNextPoNumber(availablePONumbers).toUpperCase();
+    const enteredPo = poNumber.trim().toUpperCase();
     
     // Required field validations
     if (!WEB_APP_BASE.includes("/exec")) errs.push("WEB_APP_BASE must be a deployed /exec URL.");
-    if (!poNumber.trim()) errs.push("PO Number is required.");
+    if (!poNumber.trim()) {
+      errs.push("PO Number is required.");
+    } else if (isDuplicatePo(poNumber)) {
+      // Reject duplicate PO numbers
+      errs.push(`PO Number "${poNumber.trim()}" already exists! Duplicate PO numbers are not allowed. Next valid PO is "${expectedPo}".`);
+    } else if (enteredPo !== expectedPo) {
+      // NEW REQUIREMENT: Reject jumping ahead (e.g. entering PO-0009 when next in sequence is PO-0003)
+      errs.push(`PO Number "${poNumber.trim()}" is not accepted because it is out of sequence! Skipping numbers is not allowed. Please use the next sequential PO Number: "${expectedPo}".`);
+    }
     if (!supplierName.trim()) errs.push("Supplier Name is required.");
     if (!orderDate) errs.push("Order Date is required.");
     if (!orderTime) errs.push("Order Time is required.");
@@ -1387,6 +1584,18 @@ export default function PurchaseOrderForm({
       return alert(`Could not save PO.\n${msg}`);
     }
     onSave(payload);
+    // NEW: Save sequence number to localStorage so the next PO increments automatically without duplicates
+    const poMatch = String(payload.meta.poNumber).trim().match(/^PO-0*([1-9]\d{0,3}|10000)$/i);
+    if (poMatch) {
+      setLocalStorageItem(LOCAL_STORAGE_KEYS.LAST_PO_SEQUENCE, parseInt(poMatch[1], 10));
+    }
+    const updatedAvailableList = [payload.meta.poNumber, ...(Array.isArray(availablePONumbers) ? availablePONumbers : [])];
+    setAvailablePONumbers(updatedAvailableList);
+    
+    // NEW: Update separate PO Index Tracker (Start: PO-0001, End: PO-10000, Next: PO-0002...)
+    const calculatedNextPo = getNextPoNumber(updatedAvailableList);
+    updatePoIndexTracker(payload.meta.poNumber, calculatedNextPo);
+
     alert(`Saved PO ${payload.meta.poNumber} to Google Sheet ✅`);
     resetForm();
   }
@@ -1453,6 +1662,18 @@ export default function PurchaseOrderForm({
       });
       downloadPdfBlob(doc, `${payload.meta.poNumber}.pdf`);
       onSubmitForApproval(payload);
+      // NEW: Save sequence number to localStorage so the next PO increments automatically without duplicates
+      const poMatch = String(payload.meta.poNumber).trim().match(/^PO-0*([1-9]\d{0,3}|10000)$/i);
+      if (poMatch) {
+        setLocalStorageItem(LOCAL_STORAGE_KEYS.LAST_PO_SEQUENCE, parseInt(poMatch[1], 10));
+      }
+      const updatedAvailableList = [payload.meta.poNumber, ...(Array.isArray(availablePONumbers) ? availablePONumbers : [])];
+      setAvailablePONumbers(updatedAvailableList);
+
+      // NEW: Update separate PO Index Tracker (Start: PO-0001, End: PO-10000, Next: PO-0002...)
+      const calculatedNextPo = getNextPoNumber(updatedAvailableList);
+      updatePoIndexTracker(payload.meta.poNumber, calculatedNextPo);
+
       resetForm();
     } catch (e) {
       alert(e.message || String(e));
@@ -1462,7 +1683,8 @@ export default function PurchaseOrderForm({
   }
 
   const resetForm = () => {
-    setPoNumber(makeUniquePoNumber());
+    // NEW: Automatically advance to the next sequential PO Number on form reset
+    setPoNumber(getNextPoNumber(availablePONumbers));
     setOrderDate(todayISO());
     setOrderTime(nowTime());
     setExpectedDate("");
@@ -1510,7 +1732,8 @@ export default function PurchaseOrderForm({
   }
 
   const regeneratePoNumber = () => {
-    setPoNumber(makeUniquePoNumber());
+    // Re-sync and set to the exact next consecutive PO Number in the unbroken series
+    setPoNumber(getNextPoNumber(availablePONumbers));
   };
 
   const toggleShadeEnabled = () => {
@@ -1636,6 +1859,7 @@ export default function PurchaseOrderForm({
                 )}
               </div>
 
+              {/* NEW: PO Series & Index Tracker Section */}
               <div className="nav-section">
                 <div className="nav-title">Information</div>
                 <div style={{ padding: '12px 16px', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -1729,26 +1953,41 @@ export default function PurchaseOrderForm({
 
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">PO Number <span className="required-star">*</span></label>
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>PO Number <span className="required-star">*</span></span>
+                      <span style={{ fontSize: '11px', color: '#059669', background: '#ecfdf5', padding: '1px 6px', borderRadius: '4px', border: '1px solid #a7f3d0', fontWeight: '500' }}>
+                        🔒 Auto-Locked
+                      </span>
+                    </label>
                     <div className="po-number-group">
                       <input
                         type="text"
                         className="form-input"
                         value={poNumber}
-                        onChange={(e) => setPoNumber(e.target.value)}
-                        style={{ flex: 1 }}
+                        readOnly={true}
+                        style={{ 
+                          flex: 1,
+                          backgroundColor: '#f8fafc',
+                          color: '#0f172a',
+                          fontWeight: '700',
+                          letterSpacing: '0.5px',
+                          cursor: 'not-allowed',
+                          borderColor: '#cbd5e1'
+                        }}
+                        title="PO Number is automatically generated and locked in sequence to prevent duplicates"
                         required
                       />
                       <button 
                         className="regenerate-btn" 
                         onClick={regeneratePoNumber}
-                        title="Generate new PO number"
+                        title="Re-sync with latest sheet records"
                       >
                         🔄
                       </button>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                        Format: PO-HHMMSS
+                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                        {/* Auto-increment locked format */}
+                        Format: PO-0001 to PO-10000 (Sequential • Auto-Locked)
                     </div>
                   </div>
 

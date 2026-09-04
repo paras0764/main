@@ -1,347 +1,139 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 
-/* Typography Override */
+/* Typography & Universal Box Sizing */
 * {
-  font-family: 'Plus Jakarta Sans', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  box-sizing: border-box;
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 8px !important;
-  height: 8px !important;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #ffffff !important;
+  background: #f8fafc;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 63, 136, 0.12) !important;
-  border-radius: 99px !important;
-  border: 2px solid #ffffff !important;
+  background: rgba(0, 63, 136, 0.25);
+  border-radius: 99px;
+  border: 2px solid #ffffff;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 63, 136, 0.25) !important;
+  background: rgba(0, 63, 136, 0.45);
 }
 
-/* Global Background and Canvas Overrides */
+/* Global Viewport Safety */
 html,
-body,
-#root,
-.rgp-root,
-.po-dashboard-container,
-.modern-po,
-.professional-layout,
-.dori-root,
-.app-container {
-  background-color: #ffffff !important;
-  background-image: radial-gradient(at 0% 0%, rgba(0, 63, 136, 0.02) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(212, 175, 55, 0.04) 0px, transparent 50%) !important;
-  background-attachment: fixed !important;
-  color: #1e293b !important;
-  min-height: 100vh;
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  box-sizing: border-box;
+  font-family: 'Plus Jakarta Sans', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Visual Theme System variables */
-:root {
-  /* Dashboard specific core overrides */
-  --bg: #ffffff !important;
-  --panel: #ffffff !important;
-  --ink: #1e293b !important;
-  --muted: #64748b !important;
-  --line: #e2e8f0 !important;
-  --brand: #003f88 !important;
-  --shadow-sm: 0 2px 8px rgba(0, 41, 107, 0.03) !important;
-  --shadow-md: 0 10px 30px rgba(0, 41, 107, 0.06) !important;
-  --radius-lg: 14px !important;
-  --radius-xl: 18px !important;
-
-  /* Purchase Order specific core overrides */
-  --po-bg: #fcfcfd !important;
-  --po-panel: #ffffff !important;
-  --po-ink: #1e293b !important;
-  --po-muted: #64748b !important;
-  --po-line: #e2e8f0 !important;
-  --po-brand: #003f88 !important;
-  --po-brand-hover: #00296b !important;
-  --po-brand-light: rgba(0, 63, 136, 0.08) !important;
-  --po-success: #10b981 !important;
-  --po-warning: #f59e0b !important;
-  --po-danger: #ef4444 !important;
-  --po-info: #3b82f6 !important;
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+  height: auto;
 }
 
-/* Component wrapper specific overrides */
-.professional-layout,
-.modern-po,
-.rgp-root,
-.dori-root,
-.app-container {
-  --primary: #1e293b !important;
-  --primary-light: #64748b !important;
-  --primary-dark: #0f172a !important;
-  --accent: #003f88 !important;
-  --accent-light: #00509d !important;
-  --accent-dark: #00296b !important;
-  --success: #10b981 !important;
-  --warning: #f59e0b !important;
-  --danger: #ef4444 !important;
-  --info: #3b82f6 !important;
+/* ==========================================================================
+   Table Slider & Fixed / Sticky Header Architecture
+   ========================================================================== */
 
-  --bg-color: #fcfcfd !important;
-  --card-bg: #ffffff !important;
-  --border-color: #e2e8f0 !important;
-  --text-primary: #1e293b !important;
-  --text-secondary: #64748b !important;
-  --text-muted: #94a3b8 !important;
-  --shadow-sm: 0 2px 8px rgba(0, 41, 107, 0.03) !important;
-  --shadow-md: 0 10px 30px rgba(0, 41, 107, 0.06) !important;
-  --shadow-lg: 0 20px 45px rgba(0, 41, 107, 0.1) !important;
+/* Universal Scrollable Table Slider Containers */
+.table-wrap,
+.table-container,
+.rgp-table-wrap,
+.po-summary-table-wrapper,
+.responsive-table-wrapper,
+.rgp-table-slider {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  scrollbar-width: thin;
 }
 
-/* Sidebar redraft */
-.sidebar,
-[class*="sidebar"] {
-  background: #ffffff !important;
-  border-right: 1px solid #e2e8f0 !important;
-  box-shadow: 4px 0 20px rgba(0, 41, 107, 0.02) !important;
+/* Fixed / Sticky Table Header Fields */
+.table-wrap thead,
+.rgp-table thead,
+.po-summary-table-header,
+.table-wrap thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
-.nav-link,
-.nav-item a {
-  color: #64748b !important;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+.table-wrap thead th,
+.rgp-table th,
+.po-summary-table-th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  white-space: nowrap;
 }
 
-.nav-link:hover,
-.nav-item a:hover {
-  background: rgba(0, 63, 136, 0.04) !important;
-  color: #003f88 !important;
+/* Prevent Table Column Squeezing in Horizontal Slider */
+.table-wrap tbody td,
+.rgp-table td,
+.po-summary-table-td {
+  white-space: nowrap;
 }
 
-.nav-link.active,
-.nav-item a.active,
-[class*="activeLink"] {
-  background: linear-gradient(135deg, #003f88 0%, #00296b 100%) !important;
-  color: white !important;
-  border-left: 4px solid #d4af37 !important;
-  box-shadow: 0 4px 15px rgba(0, 63, 136, 0.25) !important;
-}
-
-/* Appbars, Headers & Top Bars */
-.rgp-appbar,
-.top-bar,
-.po-navbar,
-.dori-navbar,
-header,
-[class*="navbar"] {
-  background: #ffffff !important;
-  border-bottom: 1px solid #e2e8f0 !important;
-  box-shadow: 0 4px 20px rgba(0, 41, 107, 0.03) !important;
-}
-
-/* Dashboards and KPI widgets */
-.rgp-card,
-.kpi-card,
-.section-card,
-.po-card,
-.dori-card,
-.rgp-panel,
-.info-item,
-.card,
-[class*="KpiCard"],
-[class*="Panel"] {
-  background: #ffffff !important;
-  border: 1px solid rgba(0, 63, 136, 0.08) !important;
-  box-shadow: 0 8px 30px rgba(0, 41, 107, 0.04) !important;
-  border-radius: 16px !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.rgp-card:hover,
-.kpi-card:hover,
-.section-card:hover,
-.po-card:hover,
-.dori-card:hover,
-.info-item:hover,
-.card:hover {
-  transform: translateY(-4px) !important;
-  border-color: #d4af37 !important;
-  box-shadow: 0 15px 40px rgba(0, 63, 136, 0.08), 0 0 15px rgba(212, 175, 55, 0.15) !important;
-}
-
-/* Form inputs & inputs with auto-fills */
-input[type="text"],
-input[type="number"],
-input[type="date"],
-input[type="email"],
+/* Responsive Form Controls */
+input,
 select,
-textarea,
-[class*="input"],
-[class*="select"] {
-  background-color: #ffffff !important;
-  border: 1px solid #cbd5e1 !important;
-  color: #1e293b !important;
-  border-radius: 10px !important;
-  padding: 10px 14px !important;
-  transition: all 0.2s ease-in-out !important;
+textarea {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
-input:focus,
-select:focus,
-textarea:focus,
-[class*="input"]:focus {
-  border-color: #003f88 !important;
-  background-color: #ffffff !important;
-  box-shadow: 0 0 0 3px rgba(0, 63, 136, 0.15) !important;
-  outline: none !important;
+/* ==========================================================================
+   Responsive Breakpoints
+   ========================================================================== */
+
+/* Tablet Optimizations (<= 1024px) */
+@media (max-width: 1024px) {
+  .app-container,
+  .rgp-container,
+  .po-container,
+  .professional-layout {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
 }
 
-option {
-  background-color: #ffffff !important;
-  color: #1e293b !important;
-}
+/* Mobile Optimizations (<= 768px) */
+@media (max-width: 768px) {
+  .dialog-box,
+  .modal-content,
+  [class*="modal"] {
+    max-width: 95vw;
+    max-height: 92vh;
+    margin: auto;
+  }
 
-/* Tables, Data Lists, and Grids */
-table,
-.data-table,
-.rgp-table,
-[class*="table"] {
-  width: 100% !important;
-  border-collapse: collapse !important;
-  background: transparent !important;
-}
-
-tr,
-.data-table tbody tr {
-  background: transparent !important;
-  transition: background 0.2s ease !important;
-}
-
-tr:hover,
-.data-table tbody tr:hover {
-  background: rgba(0, 63, 136, 0.02) !important;
-}
-
-th,
-.data-table th,
-.rgp-table th {
-  background: #003f88 !important;
-  color: #ffffff !important;
-  border-bottom: 2px solid #d4af37 !important;
-  font-weight: 600 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.5px !important;
-  padding: 12px 16px !important;
-}
-
-td,
-.data-table td,
-.rgp-table td {
-  border-bottom: 1px solid #e2e8f0 !important;
-  color: #1e293b !important;
-  padding: 12px 16px !important;
-}
-
-/* Buttons and Interactive Elements */
-.btn,
-button,
-input[type="submit"],
-input[type="button"] {
-  border-radius: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.2px !important;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  cursor: pointer !important;
-  border: 1px solid transparent !important;
-  padding: 10px 18px !important;
-}
-
-.btn-primary,
-button[style*="linear-gradient"],
-button.btn-success,
-button.btn-confirm,
-[class*="confirmButton"] {
-  background: linear-gradient(135deg, #003f88 0%, #00296b 100%) !important;
-  border: none !important;
-  color: white !important;
-  box-shadow: 0 4px 15px rgba(0, 63, 136, 0.2) !important;
-}
-
-.btn-primary:hover,
-button[style*="linear-gradient"]:hover,
-button.btn-success:hover,
-[class*="confirmButton"]:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 6px 20px rgba(0, 63, 136, 0.35) !important;
-}
-
-.btn-secondary,
-button.btn-outline,
-button.btn-cancel,
-button[style*="border-color"],
-[class*="cancelButton"] {
-  background: #ffffff !important;
-  border: 1px solid #cbd5e1 !important;
-  color: #475569 !important;
-}
-
-.btn-secondary:hover,
-button.btn-outline:hover,
-[class*="cancelButton"]:hover {
-  background: #f8fafc !important;
-  border-color: #94a3b8 !important;
-  transform: translateY(-1px) !important;
-}
-
-/* Dialog boxes & Overlay Modals */
-.dialog-overlay,
-.modal-overlay,
-div[style*="position: fixed"] {
-  background-color: rgba(0, 41, 107, 0.2) !important;
-  backdrop-filter: blur(8px) !important;
-}
-
-.dialog-box,
-.modal-content,
-div[style*="border-radius: 24px"],
-div[style*="border-radius: 12px"],
-[class*="modal"] {
-  background: #ffffff !important;
-  border: 1px solid rgba(0, 63, 136, 0.1) !important;
-  box-shadow: 0 25px 50px -12px rgba(0, 41, 107, 0.15) !important;
-  border-radius: 18px !important;
-}
-
-/* Badges & Indicators */
-.badge,
-[class*="badge"] {
-  border-radius: 99px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.3px !important;
-}
-
-.badge-success,
-.trend-up,
-.success-box {
-  background-color: rgba(16, 185, 129, 0.1) !important;
-  color: #059669 !important;
-}
-
-.badge-warning,
-.warning-box {
-  background-color: rgba(245, 158, 11, 0.1) !important;
-  color: #d97706 !important;
-}
-
-.badge-danger,
-.trend-down,
-.error-box {
-  background-color: rgba(239, 68, 68, 0.1) !important;
-  color: #dc2626 !important;
+  button,
+  input[type="submit"],
+  input[type="button"] {
+    min-height: 38px;
+  }
 }

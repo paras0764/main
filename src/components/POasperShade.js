@@ -12,8 +12,14 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+import {
+  WEB_APP_URL_PO_ASPER_SHADE,
+  GOOGLE_API_KEY as CONFIG_API_KEY,
+  SHEET_ID_CUTTING
+} from '../config/apiConfig';
+
 // ---------- Google Apps Script Configuration ----------
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyM5rwPfx5rpvhNCcIYT4JybUhHSb5fAClauku9W6YKnisJ-Z6Xg4H7bjKCmQiBiqVePA/exec"; // Your URL
+const APPS_SCRIPT_URL = WEB_APP_URL_PO_ASPER_SHADE; // Your URL
 
 // ---------- Caching Helpers ----------
 const cache = new Map();
@@ -92,8 +98,8 @@ function buildPoQrUrls({ base, poNo, orderDate, expectedDate, supervisorName }) 
 // ============================
 // Config
 // ============================
-const GOOGLE_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const SHEET_ID = "1Hj3JeJEKB43aYYWv8gk2UhdU6BWuEQfCg5pBlTdBMNA";
+const GOOGLE_API_KEY = CONFIG_API_KEY;
+const SHEET_ID = SHEET_ID_CUTTING;
 
 // Helpers
 const norm = (v) => (v ?? '').toString().trim();

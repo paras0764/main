@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { GOOGLE_API_KEY, DEFAULT_RGP_SPREADSHEET_IDS } from "../config/apiConfig";
+
 /* ──────────────────────────────────────────────────────────────────────────
    Config
 ────────────────────────────────────────────────────────────────────────── */
-const HARDCODED_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const DEFAULT_SPREADSHEET_ID = "1BZ-ufmxeqa9XdU-jkuIgeNxHvhnYKjWj4UpnI3bHJKo";
+const HARDCODED_API_KEY = GOOGLE_API_KEY;
+const DEFAULT_SPREADSHEET_IDS = DEFAULT_RGP_SPREADSHEET_IDS;
 const DEFAULT_RANGE = "Fabric_RGP_Logs!A1:J"; // includes header row at A1
 
 // ✅ Hard whitelist — only these columns are ever read/used
@@ -26,7 +28,7 @@ const ALLOWED_COLUMNS = [
 ────────────────────────────────────────────────────────────────────────── */
 function buildSheetsUrl({ spreadsheetId, range, apiKey }) {
   const keyToUse = apiKey || HARDCODED_API_KEY;
-  const idToUse = spreadsheetId || DEFAULT_SPREADSHEET_ID;
+  const idToUse = spreadsheetId || DEFAULT_SPREADSHEET_IDS[0];
   const rangeToUse = range || DEFAULT_RANGE;
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${idToUse}/values/${encodeURIComponent(
     rangeToUse
@@ -122,7 +124,7 @@ function norm(v) {
    Component
 ────────────────────────────────────────────────────────────────────────── */
 export default function GatePassRgp({
-  spreadsheetId = DEFAULT_SPREADSHEET_ID,
+  spreadsheetId,
   apiKey = HARDCODED_API_KEY,
   range = DEFAULT_RANGE,
   // keep for compatibility but unused for filtering now
@@ -170,16 +172,23 @@ export default function GatePassRgp({
     abortRef.current = ctrl;
 
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(
-          `Google Sheets API error ${res.status}: ${text?.slice(0, 200)}`
-        );
-      }
-      const json = await res.json();
-      const rows = rowsToObjects(json.values || []);
-      setRawRows(rows);
+      const ids = spreadsheetId ? [spreadsheetId] : DEFAULT_SPREADSHEET_IDS;
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const u = buildSheetsUrl({ spreadsheetId: id, range, apiKey });
+            const res = await fetch(u, { signal: ctrl.signal });
+            if (!res.ok) return [];
+            const json = await res.json();
+            return rowsToObjects(json.values || []);
+          } catch (e) {
+            console.warn(`Failed to load logs from sheet ${id}:`, e);
+            return [];
+          }
+        })
+      );
+      const combined = results.flat();
+      setRawRows(combined);
     } catch (err) {
       if (err?.name === "AbortError") return;
       setError(
@@ -474,33 +483,40 @@ export default function GatePassRgp({
   return (
     <div className="rgp-shell">
       <style jsx>{`
-        .rgp-shell { width: 100%; max-width: 2200px; margin: 0 auto; padding: 16px clamp(16px, 3vw, 24px); font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; color: #0f172a; background: linear-gradient(135deg, #ffffffff 0%, #f1f5f9 100%); min-height: 100vh; }
-        .rgp-header { position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 20px 24px; margin-bottom: 16px; border: 1px solid rgba(255, 255, 255, 0.2); background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 250, 252, 0.9) 100%); backdrop-filter: blur(12px); border-radius: 20px; box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
-        .rgp-title { margin: 0; font-weight: 800; letter-spacing: -0.02em; background: linear-gradient(135deg, #0e12e9ff 0%, #3b82f6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: clamp(24px, 2.5vw, 32px); }
+        .rgp-shell { width: 100%; max-width: 2200px; margin: 0 auto; padding: 16px clamp(16px, 3vw, 24px); font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; color: #0f172a; background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%); min-height: 100vh; }
+        .rgp-header { position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 20px 24px; margin-bottom: 20px; border: 1px solid rgba(255, 255, 255, 0.1); background: linear-gradient(135deg, #003f88 0%, #00296b 100%); color: #ffffff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 41, 107, 0.15); }
+        .rgp-title { margin: 0; font-weight: 800; letter-spacing: -0.02em; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; font-size: clamp(20px, 2.5vw, 28px); }
         .rgp-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-        .btn { display: inline-flex; align-items: center; gap: 8px; height: 42px; padding: 0 18px; border-radius: 12px; border: 1px solid rgba(226, 232, 240, 0.8); background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 8px rgba(2, 6, 23, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8); position: relative; overflow: hidden; }
-        .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(2, 6, 23, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.8); border-color: #cbd5e1; color: #0f172a; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.15); font-size: 13px; font-weight: 600; color: #ffffff; cursor: pointer; transition: all 0.2s ease; position: relative; overflow: hidden; }
+        .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); transform: translateY(-1px); color: #ffffff; border-color: rgba(255, 255, 255, 0.4); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-primary { background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%); color: white; border-color: transparent; box-shadow: 0 4px 16px rgba(14, 165, 233, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2); }
+        .btn-primary { background: #ffffff !important; color: #003f88 !important; border-color: #ffffff !important; font-weight: 700 !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); }
+        .btn-primary:hover { background: #f8fafc !important; color: #00296b !important; }
         .table-wrap { overflow: auto; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 18px; background: rgba(255, 255, 255, 0.7); box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6); backdrop-filter: blur(12px); position: relative; }
         table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; background: transparent; }
-        thead th { position: sticky; top: 0; z-index: 5; background: linear-gradient(135deg, #0b4681ff 0%, #054688ff 100%); color: #ffffffff; text-align: left; font-weight: 700; padding: 16px 14px; border: 1.5px solid #e2e8f0; white-space: nowrap; cursor: pointer; user-select: none; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-        tbody td { padding: 14px; border: 1px solid #f1f5f9; white-space: nowrap; color: #000000ff; font-weight: 500; }
+        thead th { position: sticky; top: 0; z-index: 5; background: linear-gradient(135deg, #0b4681 0%, #054688 100%); color: #ffffff; text-align: left; font-weight: 700; padding: 16px 14px; border: 1.5px solid #e2e8f0; white-space: nowrap; cursor: pointer; user-select: none; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+        tbody td { padding: 14px; border: 1px solid #f1f5f9; white-space: nowrap; color: #000000; font-weight: 500; }
         .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; border: 1px solid; }
         .status-active { background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%); color: #0e7490; border-color: rgba(6, 182, 212, 0.3); }
         .status-partial { background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); color: #9a3412; border-color: rgba(251, 146, 60, 0.3); }
         .pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 20px; padding: 16px; background: rgba(255, 255, 255, 0.7); border-radius: 16px; }
- .filters { display: grid; grid-template-columns: 1fr 1fr 1fr 2fr auto; gap: 10px; padding: 12px 14px; background: rgba(255,255,255,0.8); border: 1px solid #e2e8f0; border-radius: 14px; margin-bottom: 16px; }
-  .filter-field { display:flex; flex-direction:column; gap:6px; }
-  .filter-label { font-size: 12px; font-weight: 700; color:#334155; letter-spacing: .02em; }
-  .select, .search { height: 40px; border-radius: 10px; border: 1px solid #e2e8f0; background: #ffffff; padding: 0 12px; font-weight: 600; color: #334155; }
-        /* NEW: filter bar */
         .filters { display: grid; grid-template-columns: 1fr 1fr 1fr 2fr auto; gap: 10px; padding: 12px 14px; background: rgba(255,255,255,0.8); border: 1px solid #e2e8f0; border-radius: 14px; margin-bottom: 16px; }
+        .filter-field { display:flex; flex-direction:column; gap:6px; }
+        .filter-label { font-size: 12px; font-weight: 700; color:#334155; letter-spacing: .02em; }
         .select, .search { height: 40px; border-radius: 10px; border: 1px solid #e2e8f0; background: #ffffff; padding: 0 12px; font-weight: 600; color: #334155; }
         .search { width: 100%; }
-        .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef2ff; color:#312e81; border:1px solid #c7d2fe; border-radius:12px; font-weight:700; font-size:12px; }
+        .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; background:rgba(255,255,255,0.15); color:#ffffff; border:1px solid rgba(255,255,255,0.25); border-radius:20px; font-weight:600; font-size:12px; }
         .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
         .page-btn { height: 36px; padding: 0 16px; border-radius: 10px; border: 1px solid #e2e8f0; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); cursor: pointer; font-weight: 600; color: #475569; }
+        @media (max-width: 768px) {
+          .rgp-shell { padding: 10px 8px; }
+          .rgp-header { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; border-radius: 14px; }
+          .rgp-title { font-size: 1.35rem; }
+          .rgp-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; width: 100%; }
+          .btn { justify-content: center; height: 38px; font-size: 12px; padding: 0 10px; }
+          .filters { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
+          .pagination { flex-direction: column; align-items: center; gap: 10px; padding: 12px; }
+        }
       `}</style>
 
       {/* Header */}

@@ -46,16 +46,23 @@ function titleCase(str) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+import {
+  GOOGLE_API_KEY as CONFIG_API_KEY,
+  SHEET_ID_CUTTING,
+  SHEET_ID_DORI,
+  WEB_APP_URL_DORI
+} from "../config/apiConfig";
+
 // ============================
 // Config
 // ============================
-const GOOGLE_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const SHEET_ID = "1Hj3JeJEKB43aYYWv8gk2UhdU6BWuEQfCg5pBlTdBMNA";
-const SHEET_IDD = "1LjwZqU26F0xwL1tEyps8txsM1qS8LLUuE-sy_4CQK6k";
-const SHEET_IDDD="1LjwZqU26F0xwL1tEyps8txsM1qS8LLUuE-sy_4CQK6k";
+const GOOGLE_API_KEY = CONFIG_API_KEY;
+const SHEET_ID = SHEET_ID_CUTTING;
+const SHEET_IDD = SHEET_ID_DORI;
+const SHEET_IDDD = SHEET_ID_DORI;
 
 // Simple QR System URL - YOUR APPSCRIPT URL
-const QR_SYSTEM_URL = "https://script.google.com/macros/s/AKfycbxBfA7maSXGPVW3I_HkRpL27l6nC_CgkHip4KYOEpMsdFHcsPTUuiYp0OuFz4_y3zZq/exec";
+const QR_SYSTEM_URL = WEB_APP_URL_DORI;
 
 // QR Code Helper Function
 const toDataURL = (src) =>

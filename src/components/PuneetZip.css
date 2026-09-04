@@ -29,12 +29,18 @@ function titleCase(str) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+import {
+  GOOGLE_API_KEY as CONFIG_API_KEY,
+  SHEET_ID_CUTTING,
+  SHEET_ID_ZIP_RGP
+} from '../config/apiConfig';
+
 // ============================
-// Config (replace via .env)
+// Config (via apiConfig)
 // ============================
-const GOOGLE_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const SHEET_ID = "1Hj3JeJEKB43aYYWv8gk2UhdU6BWuEQfCg5pBlTdBMNA";
-const SHEET_IDD = "16mifNw0WMIlnZ1XRHsuH_8kVUm_6Y1O3uVsoM-Hjppo";
+const GOOGLE_API_KEY = CONFIG_API_KEY;
+const SHEET_ID = SHEET_ID_CUTTING;
+const SHEET_IDD = SHEET_ID_ZIP_RGP;
 
 // Safety guard
 const MAX_RANGE = 'A1:Z';

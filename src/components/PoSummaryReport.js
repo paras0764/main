@@ -2,6 +2,14 @@ import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from 'jspdf-autotable';
+import QRCode from "qrcode";
+import "./PoSummaryReport.css";
+import { generatePurchaseOrderPDF } from "./PurchaseOrderForm";
+import {
+  GOOGLE_API_KEY,
+  SHEET_ID_PURCHASE_ORDER,
+  WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE
+} from "../config/apiConfig";
 
 const POSummaryReport = () => {
   const [poData, setPoData] = useState([]);
@@ -32,9 +40,9 @@ const POSummaryReport = () => {
     descriptions: []
   });
 
-  // Replace with your actual values
-  const API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-  const SPREADSHEET_ID = "1hy43mDxXtGVq4jeMV_NxX25Q7tnX55NnplN7eqpT74k";
+  // Replace with your actual values (configured via apiConfig / .env)
+  const API_KEY = GOOGLE_API_KEY;
+  const SPREADSHEET_ID = SHEET_ID_PURCHASE_ORDER;
   
   const PO_SHEET_NAME = "PO_Main";
   const ITEMS_SHEET_NAME = "PO_Items";
@@ -381,6 +389,91 @@ const POSummaryReport = () => {
     });
     
     doc.save(`PO_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  const downloadSinglePoPDF = async (poNumber) => {
+    try {
+      const po = poData.find((p) => p["PO #"] === poNumber);
+      if (!po) return;
+      const selectedPOItems = getItemsForPO(poNumber);
+      const subtotal = getPOTotal(poNumber);
+
+      const company = {
+        name: "R5858 GARMENTS",
+        address1: "Plot No. 58, Sector 58",
+        address2: "Industrial Area, Faridabad, Haryana - 121004",
+        phone: "+91 129 4000000",
+        email: "info@r5858.com",
+        gst: "06AAAAA0000A1Z5"
+      };
+
+      let gateQR = null, recvQR = null;
+      try {
+        const gateUrl = `${WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE}?action=gateIn&po=${encodeURIComponent(poNumber)}`;
+        const recvUrl = `${WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE}?action=receive&po=${encodeURIComponent(poNumber)}`;
+        const [g, r] = await Promise.all([
+          QRCode.toDataURL(gateUrl, { width: 320, margin: 1 }).catch(() => null),
+          QRCode.toDataURL(recvUrl, { width: 320, margin: 1 }).catch(() => null)
+        ]);
+        gateQR = g;
+        recvQR = r;
+      } catch (_) {}
+
+      const payload = {
+        meta: {
+          poNumber: poNumber,
+          orderDate: po["Order Date"] || null,
+          orderTime: po["Order Time"] || null,
+          expectedDate: po["Expected Date"] || null,
+          expectedTime: po["Expected Time"] || null,
+          leadTimeMs: parseFloat(po["Lead Time (ms)"]) || null,
+          leadTimeHuman: po["Lead Time (human)"] || null,
+          requisitionRaisedBy: po["REQUISITION RAISED BY"] || null,
+          preparedBy: po["Supervisor"] || null,
+          approvedBy: po["AUTHORIZED BY"] || null,
+          remarks: po["Remarks"] || "",
+          createdAt: po["Created At"] || new Date().toISOString()
+        },
+        company,
+        supplierName: po["Supplier"] || "N/A",
+        rows: selectedPOItems.map((item, idx) => ({
+          line: parseInt(item["Line #"]) || idx + 1,
+          department: item["Department"] || "",
+          description: item["Description"] || "",
+          shade: item["Shade"] || "",
+          uom: item["UOM"] || "PCS",
+          qty: parseFloat(item["Qty"]) || 0,
+          rate: parseFloat(item["Rate"]) || 0,
+          amount: parseFloat(item["Amount"]) || 0
+        })),
+        totals: {
+          sub: subtotal,
+          discountTotal: 0,
+          taxTotal: 0,
+          gstAmount: 0,
+          gstPercentage: 0,
+          gross: subtotal,
+          payable: subtotal,
+          grandTotal: subtotal,
+          roundAdj: 0
+        }
+      };
+
+      const doc = generatePurchaseOrderPDF({
+        payload,
+        options: {
+          qrGateImage: gateQR,
+          qrRecvImage: recvQR,
+          qrSide: 96
+        }
+      });
+      if (doc && typeof doc.save === "function") {
+        doc.save(`${poNumber}.pdf`);
+      }
+    } catch (err) {
+      console.error("Failed to generate official PO PDF:", err);
+      alert(`Could not generate PDF: ${err.message || String(err)}`);
+    }
   };
 
   const handleExport = (format) => {
@@ -771,12 +864,35 @@ const POSummaryReport = () => {
                         )}
                       </div>
                       
-                      <div className="po-summary-card-footer">
+                      <div className="po-summary-card-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <button className="po-summary-view-button">
                           View Details
                           <svg className="po-summary-view-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                           </svg>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadSinglePoPDF(po["PO #"]);
+                          }}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            padding: "6px 12px",
+                            backgroundColor: "#eff6ff",
+                            color: "#1e40af",
+                            border: "1px solid #bfdbfe",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            fontWeight: "700",
+                            cursor: "pointer",
+                            transition: "all 0.2s ease"
+                          }}
+                          title="Download PDF for this PO"
+                        >
+                          📄 PDF
                         </button>
                       </div>
                     </div>
@@ -833,12 +949,29 @@ const POSummaryReport = () => {
                         <td className="po-summary-table-td po-summary-descriptions-cell">
                           {descriptions.substring(0, 100)}{descriptions.length > 100 ? "..." : ""}
                         </td>
-                        <td className="po-summary-table-td po-summary-text-center">
+                        <td className="po-summary-table-td po-summary-text-center" style={{ whiteSpace: "nowrap" }}>
                           <button
                             onClick={() => setSelectedPO(po["PO #"])}
                             className="po-summary-table-view-btn"
+                            style={{ marginRight: "6px" }}
                           >
                             View
+                          </button>
+                          <button
+                            onClick={() => downloadSinglePoPDF(po["PO #"])}
+                            style={{
+                              padding: "4px 8px",
+                              backgroundColor: "#dc2626",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              fontWeight: "700",
+                              cursor: "pointer"
+                            }}
+                            title="Download PDF"
+                          >
+                            PDF
                           </button>
                         </td>
                       </tr>
@@ -852,126 +985,284 @@ const POSummaryReport = () => {
 
         {/* Selected PO Details Modal */}
         {selectedPO && (
-          <div className="po-summary-modal-overlay">
-            <div className="po-summary-modal">
-              <div className="po-summary-modal-header">
+          <div style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.75)",
+            backdropFilter: "blur(4px)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "clamp(8px, 2vw, 20px)",
+            boxSizing: "border-box"
+          }}>
+            <div style={{
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              maxWidth: "1100px",
+              width: "100%",
+              maxHeight: "92vh",
+              overflowY: "auto",
+              border: "1px solid #cbd5e1",
+              boxSizing: "border-box"
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                position: "sticky",
+                top: 0,
+                background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)",
+                color: "#ffffff",
+                padding: "clamp(12px, 2vw, 20px) clamp(14px, 2.5vw, 24px)",
+                borderTopLeftRadius: "16px",
+                borderTopRightRadius: "16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "10px",
+                zIndex: 10,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.1)"
+              }}>
                 <div>
-                  <h2 className="po-summary-modal-title">PO Details</h2>
-                  <p className="po-summary-modal-subtitle">{selectedPO}</p>
+                  <h2 style={{ margin: 0, fontSize: "clamp(16px, 2vw, 20px)", fontWeight: "700", color: "#ffffff" }}>
+                    Purchase Order Details
+                  </h2>
+                  <div style={{
+                    marginTop: "4px",
+                    display: "inline-block",
+                    backgroundColor: "rgba(255, 255, 255, 0.2)",
+                    padding: "3px 8px",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    color: "#ffffff"
+                  }}>
+                    {selectedPO}
+                  </div>
                 </div>
-                <button
-                  onClick={() => setSelectedPO(null)}
-                  className="po-summary-modal-close"
-                >
-                  <svg className="po-summary-close-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => downloadSinglePoPDF(selectedPO)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "7px 14px",
+                      backgroundColor: "#ffffff",
+                      color: "#1e3a8a",
+                      border: "none",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      cursor: "pointer",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                      transition: "transform 0.15s ease"
+                    }}
+                    title="Download PO PDF"
+                  >
+                    📄 Download PDF
+                  </button>
+                  <button
+                    onClick={() => setSelectedPO(null)}
+                    style={{
+                      backgroundColor: "#ef4444",
+                      border: "2px solid #ffffff",
+                      borderRadius: "50%",
+                      width: "32px",
+                      height: "32px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#ffffff",
+                      fontWeight: "bold",
+                      fontSize: "16px",
+                      cursor: "pointer",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.2)"
+                    }}
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
               
-              <div className="po-summary-modal-body">
+              <div style={{ padding: "clamp(12px, 2.5vw, 24px)", backgroundColor: "#f8fafc", boxSizing: "border-box" }}>
                 {/* PO Main Info */}
                 {poData
                   .filter((po) => po["PO #"] === selectedPO)
                   .map((po, idx) => (
-                    <div key={idx} className="po-summary-info-section">
-                      <h3 className="po-summary-info-title">
-                        <svg className="po-summary-info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Order Information
+                    <div key={idx} style={{
+                      backgroundColor: "#ffffff",
+                      borderRadius: "12px",
+                      padding: "clamp(12px, 2vw, 20px)",
+                      marginBottom: "20px",
+                      border: "1px solid #e2e8f0",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+                      boxSizing: "border-box"
+                    }}>
+                      <h3 style={{
+                        margin: "0 0 14px 0",
+                        fontSize: "15px",
+                        fontWeight: "800",
+                        color: "#0f172a",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px"
+                      }}>
+                        ℹ️ Order Information
                       </h3>
-                      <div className="po-summary-info-grid">
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Supplier</div>
-                          <div className="po-summary-info-value">{po["Supplier"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Order Date/Time</div>
-                          <div className="po-summary-info-value">{po["Order Date"]} {po["Order Time"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Expected Date/Time</div>
-                          <div className="po-summary-info-value">{po["Expected Date"]} {po["Expected Time"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Lead Time</div>
-                          <div className="po-summary-info-value">{po["Lead Time (human)"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Supervisor</div>
-                          <div className="po-summary-info-value">{po["Supervisor"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Status</div>
-                          <div className="po-summary-info-value">
-                            <span className={`po-summary-status-badge po-summary-status-${(po["Status"] || "default").toLowerCase()}`}>
-                              {po["Status"]}
-                            </span>
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                        gap: "10px"
+                      }}>
+                        {[
+                          { label: "Supplier", value: po["Supplier"] },
+                          { label: "Order Date/Time", value: `${po["Order Date"]} ${po["Order Time"] || ""}` },
+                          { label: "Expected Date/Time", value: `${po["Expected Date"]} ${po["Expected Time"] || ""}` },
+                          { label: "Lead Time", value: po["Lead Time (human)"] || "—" },
+                          { label: "Supervisor", value: po["Supervisor"] || "—" },
+                          { label: "Status", value: po["Status"] || "—", isStatus: true },
+                          { label: "Gate In At", value: po["Gate In At"] || "—" },
+                          { label: "Received At", value: po["Received At"] || "—" },
+                          { label: "Raised By", value: po["REQUISITION RAISED BY"] || "—" },
+                          { label: "Authorized By", value: po["AUTHORIZED BY"] || "—" }
+                        ].map((info, i) => (
+                          <div key={i} style={{
+                            backgroundColor: "#f8fafc",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: "8px",
+                            padding: "8px 12px"
+                          }}>
+                            <div style={{
+                              fontSize: "10px",
+                              fontWeight: "700",
+                              color: "#64748b",
+                              textTransform: "uppercase",
+                              marginBottom: "3px"
+                            }}>
+                              {info.label}
+                            </div>
+                            <div style={{
+                              fontSize: "13px",
+                              fontWeight: "700",
+                              color: "#0f172a",
+                              wordBreak: "break-word"
+                            }}>
+                              {info.isStatus ? (
+                                <span style={{
+                                  display: "inline-block",
+                                  padding: "2px 8px",
+                                  borderRadius: "20px",
+                                  fontSize: "11px",
+                                  fontWeight: "700",
+                                  backgroundColor: "#dcfce7",
+                                  color: "#166534",
+                                  border: "1px solid #86efac"
+                                }}>
+                                  {info.value}
+                                </span>
+                              ) : (
+                                info.value
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Gate In At</div>
-                          <div className="po-summary-info-value">{po["Gate In At"] || "—"}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Received At</div>
-                          <div className="po-summary-info-value">{po["Received At"] || "—"}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Raised By</div>
-                          <div className="po-summary-info-value">{po["REQUISITION RAISED BY"]}</div>
-                        </div>
-                        <div className="po-summary-info-card">
-                          <div className="po-summary-info-label">Authorized By</div>
-                          <div className="po-summary-info-value">{po["AUTHORIZED BY"]}</div>
-                        </div>
+                        ))}
                       </div>
                     </div>
                   ))}
 
                 {/* Items Table */}
-                <div>
-                  <h3 className="po-summary-items-title">
-                    <svg className="po-summary-items-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
-                    Order Items
+                <div style={{
+                  backgroundColor: "#ffffff",
+                  borderRadius: "12px",
+                  padding: "clamp(12px, 2vw, 20px)",
+                  border: "1px solid #e2e8f0",
+                  boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+                  boxSizing: "border-box"
+                }}>
+                  <h3 style={{
+                    margin: "0 0 14px 0",
+                    fontSize: "15px",
+                    fontWeight: "800",
+                    color: "#0f172a",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}>
+                    📋 Order Items
                   </h3>
-                  <div className="po-summary-table-wrapper">
-                    <table className="po-summary-table">
-                      <thead className="po-summary-table-header">
-                        <tr>
-                          <th className="po-summary-table-th">S.No</th>
-                          <th className="po-summary-table-th">Line #</th>
-                          <th className="po-summary-table-th">Department</th>
-                          <th className="po-summary-table-th">Description</th>
-                          <th className="po-summary-table-th">UOM</th>
-                          <th className="po-summary-table-th po-summary-text-right">Qty</th>
-                          <th className="po-summary-table-th po-summary-text-right">Rate</th>
-                          <th className="po-summary-table-th po-summary-text-right">Amount</th>
+                  <div style={{
+                    overflowX: "auto",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1"
+                  }}>
+                    <table style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      textAlign: "left"
+                    }}>
+                      <thead>
+                        <tr style={{
+                          background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+                          color: "#ffffff"
+                        }}>
+                          {["S.No", "Line #", "Department", "Description", "UOM", "Qty", "Rate", "Amount"].map((h, idx) => (
+                            <th key={idx} style={{
+                              padding: "12px 14px",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              color: "#ffffff",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                              textAlign: idx >= 5 ? "right" : (idx === 0 || idx === 4 ? "center" : "left"),
+                              borderBottom: "2px solid #334155"
+                            }}>
+                              {h}
+                            </th>
+                          ))}
                         </tr>
                       </thead>
-                      <tbody className="po-summary-table-body">
+                      <tbody>
                         {getItemsForPO(selectedPO).map((item, idx) => (
-                          <tr key={idx} className="po-summary-table-row">
-                            <td className="po-summary-table-td po-summary-text-center">{idx + 1}</td>
-                            <td className="po-summary-table-td">{item["Line #"]}</td>
-                            <td className="po-summary-table-td">{item["Department"]}</td>
-                            <td className="po-summary-table-td">{item["Description"]}</td>
-                            <td className="po-summary-table-td po-summary-text-center">{item["UOM"]}</td>
-                            <td className="po-summary-table-td po-summary-text-right">{item["Qty"]}</td>
-                            <td className="po-summary-table-td po-summary-text-right">₹{item["Rate"]}</td>
-                            <td className="po-summary-table-td po-summary-text-right po-summary-font-semibold">₹{item["Amount"]}</td>
+                          <tr key={idx} style={{
+                            backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f8fafc",
+                            borderBottom: "1px solid #e2e8f0"
+                          }}>
+                            <td style={{ padding: "10px 14px", textAlign: "center", fontWeight: "600", color: "#64748b" }}>{idx + 1}</td>
+                            <td style={{ padding: "10px 14px", fontWeight: "600", color: "#1e293b" }}>{item["Line #"]}</td>
+                            <td style={{ padding: "10px 14px", color: "#334155" }}>{item["Department"]}</td>
+                            <td style={{ padding: "10px 14px", fontWeight: "600", color: "#0f172a" }}>{item["Description"]}</td>
+                            <td style={{ padding: "10px 14px", textAlign: "center", color: "#64748b" }}>{item["UOM"]}</td>
+                            <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: "700", color: "#1e293b" }}>{item["Qty"]}</td>
+                            <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569" }}>₹{item["Rate"]}</td>
+                            <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: "800", color: "#2563eb" }}>₹{item["Amount"]}</td>
                           </tr>
                         ))}
                       </tbody>
-                      <tfoot className="po-summary-table-footer">
-                        <tr>
-                          <td colSpan="7" className="po-summary-table-total-label">
+                      <tfoot>
+                        <tr style={{
+                          backgroundColor: "#f1f5f9",
+                          borderTop: "2px solid #cbd5e1"
+                        }}>
+                          <td colSpan="7" style={{
+                            padding: "14px 16px",
+                            textAlign: "right",
+                            fontSize: "14px",
+                            fontWeight: "800",
+                            color: "#0f172a"
+                          }}>
                             Total Amount:
                           </td>
-                          <td className="po-summary-table-total-value">
+                          <td style={{
+                            padding: "14px 16px",
+                            textAlign: "right",
+                            fontSize: "16px",
+                            fontWeight: "800",
+                            color: "#2563eb"
+                          }}>
                             ₹{getPOTotal(selectedPO)}
                           </td>
                         </tr>
@@ -992,1104 +1283,6 @@ const POSummaryReport = () => {
           </div>
         )}
       </div>
-
-      <style jsx>{`
-        /* Main Container */
-        .po-summary-app {
-          min-height: 100vh;
-          background: linear-gradient(135deg, #ffffff 0%, #ffffff 100%);
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-
-        /* Header Styles */
-        .po-summary-header {
-          background: linear-gradient(135deg, #1e3a8a 0%, #4c1d95 50%, #5b21b6 100%);
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-        }
-
-        .po-summary-header-content {
-          max-width: 2280px;
-          margin: 0 auto;
-          padding: 2rem 1.5rem;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 1rem;
-        }
-
-        .po-summary-header-text {
-          flex: 1;
-        }
-
-        .po-summary-header-top {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          margin-bottom: 0.5rem;
-        }
-
-        .po-summary-back-button {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 1rem;
-          background: rgba(255, 255, 255, 0.15);
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          border-radius: 0.5rem;
-          color: white;
-          font-size: 0.875rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .po-summary-back-button:hover {
-          background: rgba(255, 255, 255, 0.25);
-          transform: translateX(-2px);
-        }
-
-        .po-summary-back-icon {
-          width: 1.25rem;
-          height: 1.25rem;
-        }
-
-        .po-summary-title {
-          font-size: 2.25rem;
-          font-weight: bold;
-          background: linear-gradient(135deg, #ffffff 0%, #bfdbfe 100%);
-          -webkit-background-clip: text;
-          background-clip: text;
-          color: transparent;
-        }
-
-        .po-summary-subtitle {
-          color: #bfdbfe;
-          font-size: 0.875rem;
-        }
-
-        .po-summary-stats {
-          display: flex;
-          gap: 1rem;
-        }
-
-        .po-summary-stats-card {
-          background: rgba(255, 255, 255, 0.1);
-          backdrop-filter: blur(10px);
-          border-radius: 0.75rem;
-          padding: 0.5rem 1rem;
-        }
-
-        .po-summary-stats-label {
-          font-size: 0.875rem;
-          color: #bfdbfe;
-        }
-
-        .po-summary-stats-value {
-          font-weight: bold;
-          font-size: 1.5rem;
-          margin-left: 0.5rem;
-          color: white;
-        }
-
-        /* Filters Section */
-        .po-summary-filters-section {
-          max-width: 2280px;
-          margin: 1.5rem auto 0;
-          padding: 1.5rem;
-          background: white;
-          border-radius: 1rem;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        .po-summary-filters-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-          flex-wrap: wrap;
-          gap: 1rem;
-        }
-
-        .po-summary-filters-title {
-          font-size: 1rem;
-          font-weight: 600;
-          color: #1f2937;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-
-        .po-summary-filters-icon {
-          width: 1.25rem;
-          height: 1.25rem;
-          color: #6b7280;
-        }
-
-        .po-summary-clear-filters {
-          padding: 0.5rem 1rem;
-          background: #ef4444;
-          color: white;
-          border: none;
-          border-radius: 0.5rem;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: background 0.2s ease;
-        }
-
-        .po-summary-clear-filters:hover {
-          background: #dc2626;
-        }
-
-        .po-summary-filters-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 1rem;
-        }
-
-        .po-summary-filter-group {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-
-        .po-summary-filter-label {
-          font-size: 0.875rem;
-          font-weight: 500;
-          color: #374151;
-        }
-
-        .po-summary-filter-input,
-        .po-summary-filter-select {
-          padding: 0.5rem;
-          border: 1px solid #e5e7eb;
-          border-radius: 0.5rem;
-          font-size: 0.875rem;
-          transition: border-color 0.2s ease;
-        }
-
-        .po-summary-filter-input:focus,
-        .po-summary-filter-select:focus {
-          outline: none;
-          border-color: #3b82f6;
-          ring: 2px solid #3b82f6;
-        }
-
-        /* Search Wrapper */
-        .po-summary-search-wrapper {
-          position: relative;
-        }
-
-        .po-summary-clear-search {
-          position: absolute;
-          right: 0.5rem;
-          top: 50%;
-          transform: translateY(-50%);
-          background: none;
-          border: none;
-          color: #9ca3af;
-          cursor: pointer;
-          font-size: 1rem;
-          padding: 0.25rem;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: color 0.2s ease;
-        }
-
-        .po-summary-clear-search:hover {
-          color: #ef4444;
-        }
-
-        .po-summary-search-info {
-          font-size: 0.75rem;
-          color: #3b82f6;
-          margin-top: 0.25rem;
-        }
-
-        /* Multi-Select Styles */
-        .po-summary-multiselect-container {
-          position: relative;
-        }
-
-        .po-summary-multiselect-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0.5rem;
-          border: 1px solid #e5e7eb;
-          border-radius: 0.5rem;
-          background: white;
-          cursor: pointer;
-          transition: border-color 0.2s ease;
-        }
-
-        .po-summary-multiselect-header:hover {
-          border-color: #3b82f6;
-        }
-
-        .po-summary-multiselect-selected {
-          flex: 1;
-          font-size: 0.875rem;
-          color: #374151;
-        }
-
-        .po-summary-placeholder {
-          color: #9ca3af;
-        }
-
-        .po-summary-multiselect-arrow {
-          display: flex;
-          align-items: center;
-        }
-
-        .po-summary-arrow-icon {
-          width: 1.25rem;
-          height: 1.25rem;
-          color: #6b7280;
-          transition: transform 0.2s ease;
-        }
-
-        .po-summary-arrow-icon.rotate {
-          transform: rotate(180deg);
-        }
-
-        .po-summary-multiselect-dropdown {
-          position: absolute;
-          top: 100%;
-          left: 0;
-          right: 0;
-          margin-top: 0.25rem;
-          background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 0.5rem;
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-          z-index: 10;
-          max-height: 300px;
-          overflow-y: auto;
-        }
-
-        .po-summary-multiselect-actions {
-          display: flex;
-          gap: 0.5rem;
-          padding: 0.5rem;
-          border-bottom: 1px solid #e5e7eb;
-          background: #f9fafb;
-        }
-
-        .po-summary-select-all-btn,
-        .po-summary-clear-all-btn {
-          flex: 1;
-          padding: 0.25rem 0.5rem;
-          font-size: 0.75rem;
-          border: none;
-          border-radius: 0.375rem;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .po-summary-select-all-btn {
-          background: #3b82f6;
-          color: white;
-        }
-
-        .po-summary-select-all-btn:hover {
-          background: #2563eb;
-        }
-
-        .po-summary-clear-all-btn {
-          background: #ef4444;
-          color: white;
-        }
-
-        .po-summary-clear-all-btn:hover {
-          background: #dc2626;
-        }
-
-        .po-summary-multiselect-options {
-          padding: 0.5rem;
-        }
-
-        .po-summary-multiselect-option {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem;
-          cursor: pointer;
-          transition: background 0.2s ease;
-          border-radius: 0.375rem;
-        }
-
-        .po-summary-multiselect-option:hover {
-          background: #f3f4f6;
-        }
-
-        .po-summary-multiselect-option input {
-          cursor: pointer;
-        }
-
-        .po-summary-multiselect-option span {
-          font-size: 0.875rem;
-          color: #374151;
-        }
-
-        .po-summary-selected-tags {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.5rem;
-          margin-top: 0.5rem;
-        }
-
-        .po-summary-tag {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          padding: 0.25rem 0.5rem;
-          background: #e0e7ff;
-          color: #3730a3;
-          border-radius: 0.375rem;
-          font-size: 0.75rem;
-        }
-
-        .po-summary-tag-remove {
-          background: none;
-          border: none;
-          font-size: 1.125rem;
-          cursor: pointer;
-          color: #3730a3;
-          padding: 0;
-          display: inline-flex;
-          align-items: center;
-          line-height: 1;
-        }
-
-        .po-summary-tag-remove:hover {
-          color: #dc2626;
-        }
-
-        /* Main Content */
-        .po-summary-main {
-          max-width: 2280px;
-          margin: 0 auto;
-          padding: 2rem 1.5rem;
-        }
-
-        /* View Toggle */
-        .po-summary-view-toggle {
-          margin-bottom: 1.5rem;
-        }
-
-        .po-summary-cards-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-          flex-wrap: wrap;
-          gap: 1rem;
-        }
-
-        .po-summary-cards-title {
-          font-size: 1.5rem;
-          font-weight: bold;
-          color: #1f2937;
-        }
-
-        .po-summary-toggle-buttons {
-          display: flex;
-          gap: 0.5rem;
-        }
-
-        .po-summary-toggle-btn {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 1rem;
-          background: #f3f4f6;
-          border: 1px solid #e5e7eb;
-          border-radius: 0.5rem;
-          font-size: 0.875rem;
-          font-weight: 500;
-          color: #6b7280;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .po-summary-toggle-btn:hover {
-          background: #e5e7eb;
-        }
-
-        .po-summary-toggle-active {
-          background: #3b82f6;
-          color: white;
-          border-color: #3b82f6;
-        }
-
-        .po-summary-toggle-icon {
-          width: 1rem;
-          height: 1rem;
-        }
-
-        /* Export Buttons */
-        .po-summary-export-buttons {
-          display: flex;
-          gap: 0.5rem;
-        }
-
-        .po-summary-export-excel,
-        .po-summary-export-pdf {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 1rem;
-          border: none;
-          border-radius: 0.5rem;
-          font-size: 0.875rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .po-summary-export-excel {
-          background: #10b981;
-          color: white;
-        }
-
-        .po-summary-export-excel:hover {
-          background: #059669;
-          transform: translateY(-1px);
-        }
-
-        .po-summary-export-pdf {
-          background: #ef4444;
-          color: white;
-        }
-
-        .po-summary-export-pdf:hover {
-          background: #dc2626;
-          transform: translateY(-1px);
-        }
-
-        .po-summary-export-icon {
-          width: 1rem;
-          height: 1rem;
-        }
-
-        .po-summary-cards-count {
-          font-size: 0.875rem;
-          color: #6b7280;
-          background: white;
-          border-radius: 9999px;
-          padding: 0.5rem 1rem;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-          display: inline-block;
-        }
-
-        /* Cards Grid */
-        .po-summary-cards-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-          gap: 1.5rem;
-        }
-
-        /* Individual Card */
-        .po-summary-card {
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .po-summary-card:hover {
-          transform: translateY(-4px);
-        }
-
-        .po-summary-card-inner {
-          position: relative;
-          background: white;
-          border-radius: 1rem;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-          overflow: hidden;
-          transition: box-shadow 0.3s ease;
-        }
-
-        .po-summary-card:hover .po-summary-card-inner {
-          box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.2);
-        }
-
-        .po-summary-card-gradient {
-          position: absolute;
-          top: 0;
-          right: 0;
-          width: 5rem;
-          height: 5rem;
-          background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-          border-bottom-left-radius: 2rem;
-          opacity: 0.1;
-        }
-
-        .po-summary-card-content {
-          padding: 1.5rem;
-        }
-
-        .po-summary-card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          margin-bottom: 1rem;
-        }
-
-        .po-summary-serial-number {
-          font-size: 0.75rem;
-          font-weight: 600;
-          color: #6b7280;
-          background: #f3f4f6;
-          padding: 0.25rem 0.5rem;
-          border-radius: 0.375rem;
-        }
-
-        .po-summary-card-po-number {
-          font-size: 1.25rem;
-          font-weight: bold;
-          color: #1f2937;
-          transition: color 0.2s ease;
-        }
-
-        .po-summary-card:hover .po-summary-card-po-number {
-          color: #2563eb;
-        }
-
-        .po-summary-card-supplier {
-          font-size: 0.875rem;
-          color: #6b7280;
-          margin-top: 0.25rem;
-        }
-
-        /* Status Badges */
-        .po-summary-status-badge {
-          padding: 0.25rem 0.75rem;
-          border-radius: 9999px;
-          font-size: 0.75rem;
-          font-weight: 600;
-          border: 1px solid;
-        }
-
-        .po-summary-status-draft {
-          background: #fef3c7;
-          color: #92400e;
-          border-color: #fbbf24;
-        }
-
-        .po-summary-status-completed {
-          background: #d1fae5;
-          color: #065f46;
-          border-color: #10b981;
-        }
-
-        .po-summary-status-default {
-          background: #f3f4f6;
-          color: #374151;
-          border-color: #d1d5db;
-        }
-
-        /* Card Details */
-        .po-summary-card-details {
-          space-y: 0.5rem;
-        }
-
-        .po-summary-detail-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-size: 0.875rem;
-          margin-bottom: 0.5rem;
-        }
-
-        .po-summary-detail-label {
-          color: #6b7280;
-        }
-
-        .po-summary-detail-value {
-          font-weight: 500;
-          color: #374151;
-        }
-
-        .po-summary-descriptions {
-          max-width: 200px;
-          text-align: right;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .po-summary-divider {
-          border-top: 1px solid #e5e7eb;
-          margin: 0.75rem 0;
-        }
-
-        .po-summary-total-amount {
-          font-weight: bold;
-          font-size: 1.125rem;
-          color: #2563eb;
-        }
-
-        .po-summary-card-footer {
-          margin-top: 1rem;
-          padding-top: 0.75rem;
-          border-top: 1px solid #e5e7eb;
-        }
-
-        .po-summary-view-button {
-          color: #2563eb;
-          font-size: 0.875rem;
-          font-weight: 600;
-          background: none;
-          border: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          transition: color 0.2s ease;
-        }
-
-        .po-summary-view-button:hover {
-          color: #1e40af;
-        }
-
-        .po-summary-view-icon {
-          width: 1rem;
-          height: 1rem;
-          margin-left: 0.25rem;
-          transition: transform 0.2s ease;
-        }
-
-        .po-summary-view-button:hover .po-summary-view-icon {
-          transform: translateX(4px);
-        }
-
-        /* Table View */
-        .po-summary-table-view {
-          overflow-x: auto;
-        }
-
-        .po-summary-table-wrapper {
-          overflow-x: auto;
-          border-radius: 0.75rem;
-          border: 1px solid #e5e7eb;
-          background: white;
-        }
-
-        .po-summary-table {
-          min-width: 100%;
-          background: white;
-          border-collapse: collapse;
-        }
-
-        .po-summary-table-header {
-          background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
-        }
-
-        .po-summary-table-th {
-          padding: 0.75rem 1rem;
-          text-align: left;
-          font-size: 0.75rem;
-          font-weight: 600;
-          color: #374151;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          border-bottom: 1px solid #e5e7eb;
-        }
-
-        .po-summary-table-body {
-          border-top: 1px solid #e5e7eb;
-        }
-
-        .po-summary-table-row {
-          transition: background 0.15s ease;
-        }
-
-        .po-summary-table-row:hover {
-          background: #eff6ff;
-        }
-
-        .po-summary-table-td {
-          padding: 0.75rem 1rem;
-          font-size: 0.875rem;
-          color: #374151;
-          border-bottom: 1px solid #e5e7eb;
-        }
-
-        .po-summary-descriptions-cell {
-          max-width: 250px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .po-summary-table-view-btn {
-          padding: 0.25rem 0.75rem;
-          background: #3b82f6;
-          color: white;
-          border: none;
-          border-radius: 0.375rem;
-          font-size: 0.75rem;
-          cursor: pointer;
-          transition: background 0.2s ease;
-        }
-
-        .po-summary-table-view-btn:hover {
-          background: #2563eb;
-        }
-
-        /* Modal Styles */
-        .po-summary-modal-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.5);
-          backdrop-filter: blur(4px);
-          z-index: 50;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 1rem;
-          animation: poSummaryFadeIn 0.3s ease-out;
-        }
-
-        @keyframes poSummaryFadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-
-        .po-summary-modal {
-          background: white;
-          border-radius: 1rem;
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-          max-width: 1280px;
-          width: 100%;
-          max-height: 90vh;
-          overflow-y: auto;
-          transform: scale(1);
-          transition: transform 0.3s ease;
-        }
-
-        .po-summary-modal-header {
-          position: sticky;
-          top: 0;
-          background: linear-gradient(135deg, #2563eb, #4c1d95);
-          color: white;
-          padding: 1.5rem;
-          border-top-left-radius: 1rem;
-          border-top-right-radius: 1rem;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .po-summary-modal-title {
-          font-size: 1.5rem;
-          font-weight: bold;
-        }
-
-        .po-summary-modal-subtitle {
-          color: #bfdbfe;
-          font-size: 0.875rem;
-          margin-top: 0.25rem;
-        }
-
-        .po-summary-modal-close {
-          background: rgba(255, 255, 255, 0.2);
-          border: none;
-          border-radius: 9999px;
-          padding: 0.5rem;
-          cursor: pointer;
-          transition: background 0.2s ease;
-        }
-
-        .po-summary-modal-close:hover {
-          background: rgba(255, 255, 255, 0.3);
-          transform: rotate(90deg);
-        }
-
-        .po-summary-close-icon {
-          width: 1.5rem;
-          height: 1.5rem;
-          color: white;
-        }
-
-        .po-summary-modal-body {
-          padding: 1.5rem;
-        }
-
-        /* Info Section */
-        .po-summary-info-section {
-          background: linear-gradient(135deg, #f9fafb, #eff6ff);
-          border-radius: 0.75rem;
-          padding: 1.5rem;
-          margin-bottom: 1.5rem;
-        }
-
-        .po-summary-info-title {
-          font-size: 1.125rem;
-          font-weight: 600;
-          color: #1f2937;
-          margin-bottom: 1rem;
-          display: flex;
-          align-items: center;
-        }
-
-        .po-summary-info-icon {
-          width: 1.25rem;
-          height: 1.25rem;
-          margin-right: 0.5rem;
-          color: #2563eb;
-        }
-
-        .po-summary-info-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-          gap: 1rem;
-        }
-
-        .po-summary-info-card {
-          background: white;
-          border-radius: 0.5rem;
-          padding: 0.75rem;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        .po-summary-info-label {
-          font-size: 0.75rem;
-          color: #6b7280;
-          margin-bottom: 0.25rem;
-        }
-
-        .po-summary-info-value {
-          font-weight: 500;
-          color: #1f2937;
-        }
-
-        /* Items Table in Modal */
-        .po-summary-items-title {
-          font-size: 1.125rem;
-          font-weight: 600;
-          color: #1f2937;
-          margin-bottom: 1rem;
-          display: flex;
-          align-items: center;
-        }
-
-        .po-summary-items-icon {
-          width: 1.25rem;
-          height: 1.25rem;
-          margin-right: 0.5rem;
-          color: #2563eb;
-        }
-
-        .po-summary-table-footer {
-          background: linear-gradient(135deg, #f9fafb, #eff6ff);
-          font-weight: 600;
-        }
-
-        .po-summary-table-total-label {
-          padding: 1rem 1.5rem;
-          text-align: right;
-          font-size: 0.875rem;
-          font-weight: 600;
-          color: #1f2937;
-        }
-
-        .po-summary-table-total-value {
-          padding: 1rem 1.5rem;
-          text-align: right;
-          font-size: 1.25rem;
-          font-weight: bold;
-          color: #2563eb;
-        }
-
-        /* Text Utilities */
-        .po-summary-text-right {
-          text-align: right;
-        }
-
-        .po-summary-text-center {
-          text-align: center;
-        }
-
-        .po-summary-font-semibold {
-          font-weight: 600;
-        }
-
-        /* Loading State */
-        .po-summary-loading-container {
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          min-height: 24rem;
-          background: linear-gradient(135deg, #eff6ff, #e0e7ff);
-        }
-
-        .po-summary-spinner-wrapper {
-          position: relative;
-        }
-
-        .po-summary-spinner {
-          width: 4rem;
-          height: 4rem;
-          border: 4px solid #bfdbfe;
-          border-top-color: #2563eb;
-          border-radius: 50%;
-          animation: poSummarySpin 1s linear infinite;
-        }
-
-        .po-summary-spinner-inner {
-          position: absolute;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        @keyframes poSummarySpin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-
-        .po-summary-loading-text {
-          margin-top: 1rem;
-          font-size: 1.125rem;
-          font-weight: 600;
-          color: #4b5563;
-          animation: poSummaryPulse 1.5s ease-in-out infinite;
-        }
-
-        @keyframes poSummaryPulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.5;
-          }
-        }
-
-        /* Error State */
-        .po-summary-error-container {
-          min-height: 100vh;
-          background: linear-gradient(135deg, #fef2f2, #ffedd5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 1rem;
-        }
-
-        .po-summary-error-card {
-          background: white;
-          border-radius: 1rem;
-          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-          padding: 2rem;
-          max-width: 28rem;
-          width: 100%;
-          text-align: center;
-        }
-
-        .po-summary-error-icon {
-          font-size: 3.75rem;
-          margin-bottom: 1rem;
-        }
-
-        .po-summary-error-title {
-          font-size: 1.5rem;
-          font-weight: bold;
-          color: #1f2937;
-          margin-bottom: 0.5rem;
-        }
-
-        .po-summary-error-message {
-          color: #6b7280;
-          margin-bottom: 1rem;
-        }
-
-        .po-summary-retry-button {
-          background: linear-gradient(135deg, #3b82f6, #4c1d95);
-          color: white;
-          padding: 0.5rem 1.5rem;
-          border-radius: 0.5rem;
-          border: none;
-          cursor: pointer;
-          transition: opacity 0.2s ease;
-        }
-
-        .po-summary-retry-button:hover {
-          opacity: 0.9;
-        }
-
-        /* Empty State */
-        .po-summary-empty-state {
-          text-align: center;
-          padding: 4rem;
-        }
-
-        .po-summary-empty-icon {
-          font-size: 4rem;
-          margin-bottom: 1rem;
-          opacity: 0.5;
-        }
-
-        .po-summary-empty-title {
-          font-size: 1.25rem;
-          font-weight: 600;
-          color: #4b5563;
-          margin-bottom: 0.5rem;
-        }
-
-        .po-summary-empty-message {
-          color: #6b7280;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-          .po-summary-cards-grid {
-            grid-template-columns: 1fr;
-          }
-          
-          .po-summary-header-content {
-            flex-direction: column;
-            text-align: center;
-          }
-          
-          .po-summary-header-top {
-            flex-direction: column;
-          }
-          
-          .po-summary-info-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .po-summary-filters-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .po-summary-cards-header {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          .po-summary-toggle-buttons,
-          .po-summary-export-buttons {
-            justify-content: center;
-          }
-          
-          .po-summary-table-th,
-          .po-summary-table-td {
-            padding: 0.5rem;
-          }
-          
-          .po-summary-descriptions-cell {
-            max-width: 150px;
-          }
-        }
-      `}</style>
     </div>
   );
 };

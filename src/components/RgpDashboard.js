@@ -178,6 +178,7 @@ export default function RgpDashboard({
           progress: 30,
           lastUpdated: "5 min ago"
         },
+        /*
         {
           key: "partial",
           title: "Partial RGP",
@@ -193,6 +194,7 @@ export default function RgpDashboard({
           progress: 50,
           lastUpdated: "10 min ago"
         },
+        */
         {
           key: "closed",
           title: "Closed RGP",
@@ -562,22 +564,29 @@ export default function RgpDashboard({
           background-size: 100% 100%, 100% 100%, 24px 24px, 24px 24px;
           color: #1e293b;
           font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
-          padding: 40px;
+          padding: clamp(10px, 2.5vw, 40px);
+          width: 100%;
+          max-width: 100%;
+          box-sizing: border-box;
+          overflow-x: hidden;
         }
 
         .rgp-grid-container {
           max-width: 1600px;
+          width: 100%;
           margin: 0 auto;
           display: grid;
           grid-template-columns: 360px 1fr;
-          gap: 40px;
+          gap: clamp(16px, 2.5vw, 40px);
+          box-sizing: border-box;
         }
 
         /* Side Panel Styling */
         .rgp-side-panel {
           display: flex;
           flex-direction: column;
-          gap: 28px;
+          gap: 24px;
+          min-width: 0;
         }
 
         .rgp-brand-card {

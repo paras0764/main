@@ -1,37 +1,148 @@
 import { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
+import QRCode from "qrcode";
+import { saveToOfflineQueue, syncOfflineQueue, initBackgroundSyncWorker } from "../utils/fallbackUtils";
+
+import {
+  WEB_APP_URL_RGP,
+  SHEET_ID_RGP_NEW,
+  GOOGLE_API_KEY
+} from "../config/apiConfig";
 
 // MUST be your deployed /exec URL
-export const WEB_APP_URL =
-  "https://script.google.com/macros/s/AKfycbwAB7EHZu-ztnJhzmY-pY5BMW6EySqsUd8T0Cs18ocMAo9eTWoP6faBqZOCJJ6bIvkqlg/exec";
+export const WEB_APP_URL = WEB_APP_URL_RGP;
+// Google Sheets & Storage Configuration for RGP Sequence Tracking
+const SPREADSHEET_ID = SHEET_ID_RGP_NEW;
+const API_KEY = GOOGLE_API_KEY;
+const RGP_RANGE = "Fabric_RGP!A:A";
+const LOCAL_STORAGE_RGP_KEY = "rgp_0001_series_last_no";
+const LOCAL_STORAGE_MAX_SEQ_KEY = "rgp_0001_series_max_seq";
 
-// Enhanced QR code generation with multiple fallbacks
-export const generateQRCode = async (url) => {
-  const services = [
-    `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`,
-    `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=300&margin=4`,
-    `https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=${encodeURIComponent(url)}&chld=L|1`
-  ];
+// Clean up any legacy test keys from browser storage
+try {
+  localStorage.removeItem("rgp_last_sequence_num");
+  localStorage.removeItem("rgp_last_max_sequence");
+} catch (_) { }
 
-  for (let serviceUrl of services) {
+const RGP_NEW_SERIES_PATTERN = /^RGP[\s-]?0*([1-9]\d{0,3}|10000)$/i;
+
+/**
+ * Extract integer sequence number specifically for the "RGP 0001 ... RGP 10000" series
+ */
+export function extractRgpSeqNumber(val) {
+  if (!val) return null;
+  const str = String(val).trim();
+  const m = str.match(RGP_NEW_SERIES_PATTERN);
+  if (m) {
+    const num = parseInt(m[1], 10);
+    if (num >= 1 && num <= 10000) return num;
+  }
+  return null;
+}
+
+/**
+ * Format sequence integer to standard 4-digit RGP string (e.g. "RGP 0001", "RGP 0015", "RGP 10000")
+ */
+export function formatRgpNumber(seq) {
+  const num = Math.max(1, parseInt(seq, 10) || 1);
+  if (num < 10000) {
+    return `RGP ${String(num).padStart(4, "0")}`;
+  }
+  return `RGP ${num}`;
+}
+
+/**
+ * ============================================================================
+ * CONTINUOUS RGP SEQUENCE GENERATOR
+ * ============================================================================
+ * - Always increments consecutively (Max Sequence Seen + 1).
+ * - NEVER resets or starts again from 0001 once any sequence exists.
+ * - Scans all existing sheet records, cached lists, and persistent localStorage.
+ * - Prevents duplicates by always picking higher than all known numbers.
+ * ============================================================================
+ */
+export function getNextRgpNumber(existingRgpList = []) {
+  try {
+    let maxNum = 0;
+
+    // 1. Check persistent localStorage values
     try {
-      console.log(`Trying QR service: ${serviceUrl}`);
-      const response = await fetch(serviceUrl);
-      if (response.ok) {
-        const blob = await response.blob();
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
+      const storedMax = localStorage.getItem(LOCAL_STORAGE_MAX_SEQ_KEY);
+      if (storedMax) {
+        const parsed = parseInt(storedMax, 10);
+        if (!isNaN(parsed) && parsed > maxNum) maxNum = parsed;
       }
-    } catch (e) {
-      console.warn(`QR service failed: ${serviceUrl}`, e);
-      continue;
+
+      const storedLast = localStorage.getItem(LOCAL_STORAGE_RGP_KEY);
+      if (storedLast) {
+        const parsed = extractRgpSeqNumber(storedLast);
+        if (parsed && parsed > maxNum) maxNum = parsed;
+      }
+    } catch (_) { }
+
+    // 2. Parse all existing sheet RGP records
+    if (Array.isArray(existingRgpList)) {
+      for (const item of existingRgpList) {
+        const parsed = extractRgpSeqNumber(item);
+        if (parsed && parsed > maxNum) {
+          maxNum = parsed;
+        }
+      }
+    }
+
+    // Next continuous sequence is strictly maxNum + 1
+    const nextNum = maxNum + 1;
+
+    // Save max sequence seen
+    try {
+      if (maxNum > 0) {
+        localStorage.setItem(LOCAL_STORAGE_MAX_SEQ_KEY, String(maxNum));
+      }
+    } catch (_) { }
+
+    return formatRgpNumber(nextNum);
+  } catch (err) {
+    console.error("Error calculating next RGP number:", err);
+    return "RGP 0001";
+  }
+}
+
+// Enhanced 100% Offline Client-Side QR Code Generator
+export const generateQRCode = async (url) => {
+  try {
+    // 1. Instant local client-side offline QR generation (Zero network calls!)
+    const dataUrl = await QRCode.toDataURL(url, {
+      width: 300,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+    return dataUrl;
+  } catch (err) {
+    console.warn("Local QR generation fallback to online services...", err);
+    const services = [
+      `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`,
+      `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=300&margin=4`
+    ];
+
+    for (let serviceUrl of services) {
+      try {
+        const response = await fetch(serviceUrl);
+        if (response.ok) {
+          const blob = await response.blob();
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch (_) {
+        continue;
+      }
     }
   }
-  
-  throw new Error('All QR code services are currently unavailable');
+
+  throw new Error('Unable to generate QR code');
 };
 
 // Convert image URL to data URL with better error handling
@@ -89,7 +200,7 @@ const RGP_TYPES = ["Fabric", "Tools", "Machine", "Sample", "Other"];
 // Prepared By & Authorized By Options
 const PREPARED_BY_OPTIONS = [
   "RASHMI",
-  
+
 ];
 
 const AUTHORIZED_BY_OPTIONS = [
@@ -97,7 +208,7 @@ const AUTHORIZED_BY_OPTIONS = [
   "EA",
   "VARUN SIR",
   "SAHIL CA",
-  
+
 ];
 
 // Enhanced RGP PDF Generator - With Prepared By & Authorized By
@@ -169,7 +280,7 @@ export function generateRgpPDF({ payload, options = {} }) {
 
     const metaPad = 12, lblW = 84;
     const mRows = [
-      ["RGP #", (payload.rgpNo || "").replace(/\s+/g, "")],
+      ["RGP #", (payload.rgpNo || "").trim()],
       ["Date", payload.date || ""],
       ["Type", payload.rgpType || ""],
       ...(payload.expectedReturnDate ? [["Expected Return", payload.expectedReturnDate]] : []),
@@ -216,7 +327,7 @@ export function generateRgpPDF({ payload, options = {} }) {
     if (qrEntryImage) {
       const qx = x3 + 12 + (wGate - 24 - QR_SIDE) / 2;
       const qy = y + 18 + 10;
-      try { doc.addImage(qrEntryImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch {}
+      try { doc.addImage(qrEntryImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch { }
     }
 
     y += blockH + 16;
@@ -231,8 +342,8 @@ export function generateRgpPDF({ payload, options = {} }) {
       const qty1 = (+r.qty1 || 0).toLocaleString();
       const qty2 = (+r.qty2 || 0).toLocaleString();
       const totalQty = (+r.qty1 || 0);
-      return { 
-        ...r, 
+      return {
+        ...r,
         _i: i + 1,
         _qty1Str: qty1,
         _qty2Str: qty2,
@@ -242,9 +353,9 @@ export function generateRgpPDF({ payload, options = {} }) {
     });
 
     const measureMax = (arr, key) => arr.reduce((m, r) => Math.max(m, doc.getTextWidth(String(r[key] || ""))), 0);
-    
-    const MIN = { 
-      line: 28, lotNo: 50, department: 80, description: 120, 
+
+    const MIN = {
+      line: 28, lotNo: 50, department: 80, description: 120,
       purpose: 70, uom: 45, qty1: 40, qty2: 40, totalQty: 45
     };
 
@@ -295,7 +406,7 @@ export function generateRgpPDF({ payload, options = {} }) {
       doc.rect(x0, y, innerW, rowH);
       for (let i = 1; i < xs.length - 1; i++) line(xs[i], y, xs[i], y + rowH);
       const yy = y + 12;
-      
+
       rtext(r._i, xs[1] - 6, yy);
       text(r.lotNo || "", xs[1] + 6, yy);
       text(r.department || "", xs[2] + 6, yy);
@@ -310,9 +421,9 @@ export function generateRgpPDF({ payload, options = {} }) {
     };
 
     drawHeader();
-    let totalQuantity = 0; 
+    let totalQuantity = 0;
     rows.forEach((r, i) => { totalQuantity += drawRow(r, i); });
-    
+
     const totalH = 26;
     needSpace(totalH, true);
     doc.rect(x0, y, innerW, totalH);
@@ -340,7 +451,7 @@ export function generateRgpPDF({ payload, options = {} }) {
     if (qrReturnImage) {
       const qx = x1 + 10 + (colW - 20 - QR_SIDE) / 2;
       const qy = blockTop + 18 + 10;
-      try { doc.addImage(qrReturnImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch {}
+      try { doc.addImage(qrReturnImage, "PNG", qx, qy, QR_SIDE, QR_SIDE); } catch { }
     }
 
     // Wide right box: REMARKS
@@ -388,22 +499,47 @@ function PreviewModal({ payload, onClose, onConfirm, loading }) {
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
 
   useEffect(() => {
-    const generatePreview = () => {
+    let url = null;
+    let isCancelled = false;
+
+    async function buildPreview() {
       try {
+        const previewRgpNo = payload.rgpNo === "(auto)" ? "RGP 0001" : payload.rgpNo;
         const previewPayload = {
           ...payload,
-          rgpNo: payload.rgpNo === "(auto)" ? "RGP-PREVIEW-001" : payload.rgpNo
+          rgpNo: previewRgpNo
         };
-        const doc = generateRgpPDF({ payload: previewPayload, options: { qrEntryImage: null, qrReturnImage: null } });
-        const pdfBlob = doc.output('blob');
-        const pdfUrl = URL.createObjectURL(pdfBlob);
-        setPreviewPdfUrl(pdfUrl);
-        return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); };
+
+        const entryUrl = `${WEB_APP_URL}?mode=entry&rgp=${encodeURIComponent(previewRgpNo)}`;
+        const returnUrl = `${WEB_APP_URL}?mode=return&rgp=${encodeURIComponent(previewRgpNo)}`;
+
+        // Render QR codes offline in preview
+        const [qrEntryImage, qrReturnImage] = await Promise.all([
+          generateQRCode(entryUrl).catch(() => null),
+          generateQRCode(returnUrl).catch(() => null)
+        ]);
+
+        if (isCancelled) return;
+
+        const doc = generateRgpPDF({
+          payload: previewPayload,
+          options: { qrEntryImage, qrReturnImage }
+        });
+
+        const pdfBlob = new Blob([doc.output("blob")], { type: "application/pdf" });
+        url = URL.createObjectURL(pdfBlob);
+        setPreviewPdfUrl(url);
       } catch (error) {
         console.error("Failed to generate preview:", error);
       }
+    }
+
+    buildPreview();
+
+    return () => {
+      isCancelled = true;
+      if (url) URL.revokeObjectURL(url);
     };
-    generatePreview();
   }, [payload]);
 
   return (
@@ -414,9 +550,32 @@ function PreviewModal({ payload, onClose, onConfirm, loading }) {
             <Emoji size={22} mr={8}>👁️</Emoji>
             Preview RGP Document
           </h2>
-          <button onClick={onClose} style={modalStyles.closeButton} disabled={loading}>
-            <Emoji size={18}>✕</Emoji>
-          </button>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            {previewPdfUrl && (
+              <a
+                href={previewPdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#eff6ff",
+                  color: "#003f88",
+                  borderRadius: "8px",
+                  textDecoration: "none",
+                  fontWeight: "600",
+                  fontSize: "13px",
+                  border: "1px solid #bfdbfe",
+                  display: "inline-flex",
+                  alignItems: "center"
+                }}
+              >
+                ↗️ Open in New Window
+              </a>
+            )}
+            <button onClick={onClose} style={modalStyles.closeButton} disabled={loading}>
+              <Emoji size={18}>✕</Emoji>
+            </button>
+          </div>
         </div>
         <div style={modalStyles.previewContainer}>
           {previewPdfUrl ? (
@@ -447,37 +606,40 @@ const modalStyles = {
     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(8px)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000, padding: '20px',
+    zIndex: 1000, padding: 'clamp(8px, 2vw, 20px)',
+    boxSizing: 'border-box',
   },
   modal: {
-    backgroundColor: 'white', borderRadius: '24px', width: '90%', maxWidth: '1200px',
-    maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+    backgroundColor: 'white', borderRadius: '20px', width: '95%', maxWidth: '1200px',
+    maxHeight: '92vh', display: 'flex', flexDirection: 'column',
     boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', overflow: 'hidden',
+    boxSizing: 'border-box',
   },
   header: {
-    padding: '28px 36px', backgroundColor: '#f8fafc', borderBottom: '2px solid #e2e8f0',
+    padding: 'clamp(14px, 2vw, 24px)', backgroundColor: '#f8fafc', borderBottom: '2px solid #e2e8f0',
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    flexWrap: 'wrap', gap: '10px',
   },
-  title: { margin: 0, fontSize: '1.9rem', fontWeight: '700', color: '#00296b', display: 'flex', alignItems: 'center' },
+  title: { margin: 0, fontSize: 'clamp(1.2rem, 2.5vw, 1.7rem)', fontWeight: '700', color: '#00296b', display: 'flex', alignItems: 'center' },
   closeButton: {
-    background: 'none', border: '2px solid #e2e8f0', borderRadius: '12px', width: '48px', height: '48px',
+    background: 'none', border: '2px solid #e2e8f0', borderRadius: '10px', width: '38px', height: '38px',
     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-    fontSize: '20px', transition: 'all 0.3s ease', color: '#64748b',
+    fontSize: '18px', transition: 'all 0.3s ease', color: '#64748b',
   },
-  previewContainer: { flex: 1, padding: '28px', overflow: 'auto', backgroundColor: '#f1f5f9' },
-  previewFrame: { width: '100%', height: '550px', border: 'none', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' },
-  loadingPreview: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '550px', color: '#64748b' },
-  footer: { padding: '28px 36px', backgroundColor: '#f8fafc', borderTop: '2px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', gap: '20px' },
+  previewContainer: { flex: 1, padding: 'clamp(10px, 2vw, 24px)', overflow: 'auto', backgroundColor: '#f1f5f9' },
+  previewFrame: { width: '100%', height: '500px', border: 'none', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' },
+  loadingPreview: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', color: '#64748b' },
+  footer: { padding: 'clamp(12px, 2vw, 24px)', backgroundColor: '#f8fafc', borderTop: '2px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
   cancelButton: {
-    padding: '16px 32px', backgroundColor: 'white', color: '#4b5563', border: '2px solid #d1d5db',
-    borderRadius: '14px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer',
-    transition: 'all 0.3s ease', display: 'flex', alignItems: 'center', fontFamily: 'inherit',
+    padding: '10px 20px', backgroundColor: 'white', color: '#4b5563', border: '1.5px solid #d1d5db',
+    borderRadius: '10px', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
+    transition: 'all 0.3s ease', display: 'inline-flex', alignItems: 'center', fontFamily: 'inherit',
   },
   confirmButton: {
-    padding: '16px 36px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-    color: 'white', border: 'none', borderRadius: '14px', fontSize: '1.1rem', fontWeight: '700',
-    cursor: 'pointer', transition: 'all 0.3s ease', display: 'flex', alignItems: 'center',
-    fontFamily: 'inherit', boxShadow: '0 6px 20px rgba(16, 185, 129, 0.3)',
+    padding: '10px 24px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+    color: 'white', border: 'none', borderRadius: '10px', fontSize: '0.95rem', fontWeight: '700',
+    cursor: 'pointer', transition: 'all 0.3s ease', display: 'inline-flex', alignItems: 'center',
+    fontFamily: 'inherit', boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)',
   },
 };
 
@@ -485,8 +647,11 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
   const toYMD = (d) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-  const [form, setForm] = useState({
-    rgpNo: "(auto)",
+  const [existingRgps, setExistingRgps] = useState([]);
+  const [loadingRgpSeq, setLoadingRgpSeq] = useState(false);
+
+  const [form, setForm] = useState(() => ({
+    rgpNo: getNextRgpNumber([]),
     date: toYMD(today),
     vendor: "",
     rgpType: "Fabric",
@@ -501,7 +666,67 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
     preparedBy: "",
     authorizedBy: "",
     remarks: "",
-  });
+  }));
+
+  // Initialize offline sync engine and load sequence on mount
+  useEffect(() => {
+    initBackgroundSyncWorker(WEB_APP_URL);
+    let mounted = true;
+    async function loadRgpSequence() {
+      try {
+        setLoadingRgpSeq(true);
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(RGP_RANGE)}?key=${API_KEY}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.values || []).map(r => r[0]).filter(Boolean);
+          if (mounted) {
+            setExistingRgps(list);
+            const nextSeq = getNextRgpNumber(list);
+            setForm(f => ({ ...f, rgpNo: nextSeq }));
+          }
+        } else {
+          if (mounted) {
+            const nextSeq = getNextRgpNumber(existingRgps);
+            setForm(f => ({ ...f, rgpNo: nextSeq }));
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load RGP sequence from sheet:", err);
+        if (mounted) {
+          const nextSeq = getNextRgpNumber(existingRgps);
+          setForm(f => ({ ...f, rgpNo: nextSeq }));
+        }
+      } finally {
+        if (mounted) setLoadingRgpSeq(false);
+      }
+    }
+    loadRgpSequence();
+    return () => { mounted = false; };
+  }, []);
+
+  const refreshRgpSequence = async () => {
+    try {
+      setLoadingRgpSeq(true);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(RGP_RANGE)}?key=${API_KEY}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const list = (data.values || []).map(r => r[0]).filter(Boolean);
+        setExistingRgps(list);
+        const nextSeq = getNextRgpNumber(list);
+        setForm(f => ({ ...f, rgpNo: nextSeq }));
+      } else {
+        const nextSeq = getNextRgpNumber(existingRgps);
+        setForm(f => ({ ...f, rgpNo: nextSeq }));
+      }
+    } catch (_) {
+      const nextSeq = getNextRgpNumber(existingRgps);
+      setForm(f => ({ ...f, rgpNo: nextSeq }));
+    } finally {
+      setLoadingRgpSeq(false);
+    }
+  };
 
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -510,7 +735,7 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
   const [customUoms, setCustomUoms] = useState({});
   const [showPreview, setShowPreview] = useState(false);
   const [submissionComplete, setSubmissionComplete] = useState(false);
-  
+
   // New states for Prepared By & Authorized By
   const [isPreparedByCustom, setIsPreparedByCustom] = useState(false);
   const [isAuthorizedByCustom, setIsAuthorizedByCustom] = useState(false);
@@ -571,57 +796,38 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
     if (form.expectedReturnDate && form.date && form.expectedReturnDate < form.date)
       e.expectedReturnDate = "Cannot be before Issue Date";
 
+    // Duplicate & Sequence validation for RGP Number
+    if (form.rgpNo && form.rgpNo !== "(auto)") {
+      const currentSeq = extractRgpSeqNumber(form.rgpNo);
+      const isDuplicate = existingRgps.some((p) => {
+        if (!p) return false;
+        const normP = String(p).trim().toUpperCase().replace(/[\s\/-]/g, "");
+        const normCurrent = String(form.rgpNo).trim().toUpperCase().replace(/[\s\/-]/g, "");
+        if (normP === normCurrent) return true;
+        const pSeq = extractRgpSeqNumber(p);
+        return pSeq !== null && currentSeq !== null && pSeq === currentSeq;
+      });
+      if (isDuplicate) {
+        e.rgpNo = `Duplicate RGP (${form.rgpNo}) detected! This sequence is already recorded in the system.`;
+      }
+    }
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const silentRefresh = () => {
-    const formKey = 'rgp_form_backup_' + new Date().getTime();
-    sessionStorage.setItem(formKey, JSON.stringify({ form, customRgpType, customDepartments, customUoms, isPreparedByCustom, isAuthorizedByCustom, preparedByCustomValue, authorizedByCustomValue }));
-    setSubmissionComplete(true);
-    setTimeout(() => {
-      sessionStorage.removeItem(formKey);
-      window.location.reload();
-    }, 100);
-  };
-
-  useEffect(() => {
-    const checkForBackup = () => {
-      const keys = Object.keys(sessionStorage);
-      const backupKey = keys.find(key => key.startsWith('rgp_form_backup_'));
-      if (backupKey) {
-        try {
-          const backup = JSON.parse(sessionStorage.getItem(backupKey));
-          if (backup) {
-            setForm(backup.form);
-            setCustomRgpType(backup.customRgpType);
-            setCustomDepartments(backup.customDepartments);
-            setCustomUoms(backup.customUoms);
-            setIsPreparedByCustom(backup.isPreparedByCustom);
-            setIsAuthorizedByCustom(backup.isAuthorizedByCustom);
-            setPreparedByCustomValue(backup.preparedByCustomValue);
-            setAuthorizedByCustomValue(backup.authorizedByCustomValue);
-            setTimeout(() => alert("✅ Form submitted successfully! Data has been restored."), 500);
-            sessionStorage.removeItem(backupKey);
-          }
-        } catch (error) {
-          console.error("Failed to restore backup:", error);
-          sessionStorage.removeItem(backupKey);
-        }
-      }
-    };
-    checkForBackup();
-  }, []);
-
   const handlePreview = (e) => {
-    e.preventDefault();
-    if (!validate()) return;
+    if (e && e.preventDefault) e.preventDefault();
+    if (!validate()) {
+      alert("⚠️ Please fill in all required fields (Vendor, Expected Return Date, Prepared By, Authorized By, and valid Items) before previewing.");
+      return;
+    }
     setShowPreview(true);
   };
 
   const handleFinalSubmit = async () => {
     if (submitting) return;
-    
+
     if (!WEB_APP_URL.includes("/exec")) {
       alert("❌ WEB_APP_URL must be a deployed /exec URL");
       return;
@@ -630,12 +836,13 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
     const first = (form.entries && form.entries[0]) || {};
     const legacyQty = (Number(first.qty1) || 0) || "";
     const rgpTypeFinal = form.rgpType === "Other" ? customRgpType.trim() : form.rgpType;
-    
+
     // Get final Prepared By and Authorized By values
     const finalPreparedBy = isPreparedByCustom ? preparedByCustomValue : form.preparedBy;
     const finalAuthorizedBy = isAuthorizedByCustom ? authorizedByCustomValue : form.authorizedBy;
 
     const payload = {
+      rgpNo: form.rgpNo,
       date: form.date,
       vendor: form.vendor,
       rgpType: rgpTypeFinal,
@@ -662,26 +869,40 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
     };
 
     setSubmitting(true);
-    
+
     try {
       console.log("Submitting payload to:", WEB_APP_URL);
-      
+
       const res = await fetch(WEB_APP_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
         body: "data=" + encodeURIComponent(JSON.stringify(payload)),
       });
-      
+
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      
+
       const text = await res.text();
       let json;
       try { json = JSON.parse(text); } catch (parseError) { throw new Error('Invalid response from server'); }
-      
-      if (!json.ok) throw new Error(json.error || "Save failed");
 
-      const assignedRgpNo = json.rgpNo;
+      // Enforce the exact selected RGP number (e.g. RGP-0001)
+      const assignedRgpNo = form.rgpNo || json.rgpNo;
       console.log("RGP created successfully:", assignedRgpNo);
+
+      // Save issued sequence to localStorage and existing cache
+      try {
+        localStorage.setItem(LOCAL_STORAGE_RGP_KEY, assignedRgpNo);
+        const parsedSeq = extractRgpSeqNumber(assignedRgpNo);
+        if (parsedSeq) {
+          const currentStoredMax = parseInt(localStorage.getItem(LOCAL_STORAGE_MAX_SEQ_KEY) || "0", 10);
+          if (parsedSeq > currentStoredMax) {
+            localStorage.setItem(LOCAL_STORAGE_MAX_SEQ_KEY, String(parsedSeq));
+          }
+        }
+      } catch (_) { }
+
+      const newExisting = [...existingRgps, assignedRgpNo];
+      setExistingRgps(newExisting);
 
       const baseUrl = json.baseUrl || WEB_APP_URL;
       const entryUrl = json.entryUrl || `${baseUrl}?mode=entry&rgp=${encodeURIComponent(assignedRgpNo)}`;
@@ -695,27 +916,127 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
       if (entryQR && entryQR.startsWith('blob:')) { try { entryQRDataUrl = await toDataURL(entryQR); } catch (error) { console.warn("Failed to convert entry QR to data URL:", error); } }
       if (returnQR && returnQR.startsWith('blob:')) { try { returnQRDataUrl = await toDataURL(returnQR); } catch (error) { console.warn("Failed to convert return QR to data URL:", error); } }
 
-      setForm((f) => ({ ...f, rgpNo: assignedRgpNo }));
       if (onSubmit) onSubmit({ ...payload, rgpNo: assignedRgpNo });
-      
+
       const pdfDoc = generateRgpPDF({ payload: { ...payload, rgpNo: assignedRgpNo }, options: { qrEntryImage: entryQRDataUrl, qrReturnImage: returnQRDataUrl } });
-      const safeNo = assignedRgpNo.replace(/[^\w\-]+/g, "-");
-      pdfDoc.save(`RGP-${safeNo}.pdf`);
-      
+      const safeFilename = `${String(assignedRgpNo).replace(/[^\w\s\-]+/g, "")}.pdf`;
+      pdfDoc.save(safeFilename);
+
       setShowPreview(false);
-      alert(`✅ RGP Created Successfully!\nRGP No: ${assignedRgpNo}\nPDF has been downloaded.`);
-      silentRefresh();
-      
-    } catch (err) {
-      console.error("Submit error:", err);
-      alert(`❌ Error: ${err.message}\n\nData was saved to sheet but PDF generation failed.`);
       setSubmitting(false);
+
+      // Auto-increment form to the next sequential RGP number (e.g. RGP 0002)
+      const nextRgpNo = getNextRgpNumber(newExisting);
+      setForm({
+        rgpNo: nextRgpNo,
+        date: toYMD(today),
+        vendor: "",
+        rgpType: "Fabric",
+        department: "",
+        purpose: "",
+        itemDesc: "",
+        qty: "",
+        uom: "",
+        entries: [{ lotNo: "", itemDesc: "", qty1: "", qty2: "", uom: "", department: "", purpose: "" }],
+        expectedReturnDate: "",
+        vehicleNo: "",
+        preparedBy: "",
+        authorizedBy: "",
+        remarks: "",
+      });
+      setErrors({});
+      setCustomRgpType("");
+      setCustomDepartments({});
+      setCustomUoms({});
+      setIsPreparedByCustom(false);
+      setIsAuthorizedByCustom(false);
+      setPreparedByCustomValue("");
+      setAuthorizedByCustomValue("");
+
+      alert(`✅ RGP Created Successfully!\nRGP No: ${assignedRgpNo}\nNext Sequential RGP: ${nextRgpNo}\nPDF has been downloaded.`);
+
+    } catch (err) {
+      console.warn("Live submit failed, switching to safe offline queue mode:", err);
+
+      // 1. Save to persistent offline queue for background sync
+      const assignedRgpNo = form.rgpNo || getNextRgpNumber(existingRgps);
+      saveToOfflineQueue({ ...payload, rgpNo: assignedRgpNo });
+
+      // 2. Save issued sequence to localStorage
+      try {
+        localStorage.setItem(LOCAL_STORAGE_RGP_KEY, assignedRgpNo);
+        const parsedSeq = extractRgpSeqNumber(assignedRgpNo);
+        if (parsedSeq) {
+          const currentStoredMax = parseInt(localStorage.getItem(LOCAL_STORAGE_MAX_SEQ_KEY) || "0", 10);
+          if (parsedSeq > currentStoredMax) {
+            localStorage.setItem(LOCAL_STORAGE_MAX_SEQ_KEY, String(parsedSeq));
+          }
+        }
+      } catch (_) {}
+
+      const newExisting = [...existingRgps, assignedRgpNo];
+      setExistingRgps(newExisting);
+
+      // 3. Generate QR and download PDF immediately (No disruption to user!)
+      const entryUrl = `${WEB_APP_URL}?mode=entry&rgp=${encodeURIComponent(assignedRgpNo)}`;
+      const returnUrl = `${WEB_APP_URL}?mode=return&rgp=${encodeURIComponent(assignedRgpNo)}`;
+
+      let entryQR, returnQR;
+      try { entryQR = await generateQRCode(entryUrl); } catch (_) {}
+      try { returnQR = await generateQRCode(returnUrl); } catch (_) {}
+
+      let entryQRDataUrl = entryQR, returnQRDataUrl = returnQR;
+      if (entryQR && entryQR.startsWith('blob:')) { try { entryQRDataUrl = await toDataURL(entryQR); } catch (_) {} }
+      if (returnQR && returnQR.startsWith('blob:')) { try { returnQRDataUrl = await toDataURL(returnQR); } catch (_) {} }
+
+      if (onSubmit) onSubmit({ ...payload, rgpNo: assignedRgpNo });
+
+      const pdfDoc = generateRgpPDF({ payload: { ...payload, rgpNo: assignedRgpNo }, options: { qrEntryImage: entryQRDataUrl, qrReturnImage: returnQRDataUrl } });
+      const safeFilename = `${String(assignedRgpNo).replace(/[^\w\s\-]+/g, "")}.pdf`;
+      pdfDoc.save(safeFilename);
+
+      setShowPreview(false);
+      setSubmitting(false);
+
+      // 4. Advance form sequence
+      const nextRgpNo = getNextRgpNumber(newExisting);
+      setForm({
+        rgpNo: nextRgpNo,
+        date: toYMD(today),
+        vendor: "",
+        rgpType: "Fabric",
+        department: "",
+        purpose: "",
+        itemDesc: "",
+        qty: "",
+        uom: "",
+        entries: [{ lotNo: "", itemDesc: "", qty1: "", qty2: "", uom: "", department: "", purpose: "" }],
+        expectedReturnDate: "",
+        vehicleNo: "",
+        preparedBy: "",
+        authorizedBy: "",
+        remarks: "",
+      });
+      setErrors({});
+      setCustomRgpType("");
+      setCustomDepartments({});
+      setCustomUoms({});
+      setIsPreparedByCustom(false);
+      setIsAuthorizedByCustom(false);
+      setPreparedByCustomValue("");
+      setAuthorizedByCustomValue("");
+
+      // 5. Try triggering background sync
+      syncOfflineQueue(WEB_APP_URL);
+
+      alert(`✅ RGP Created & Queued (Offline Mode)!\nRGP No: ${assignedRgpNo}\nNext Sequential RGP: ${nextRgpNo}\n\nPDF has been downloaded.\nData is safely queued and will automatically sync to Google Sheets as soon as internet connection is available.`);
     }
   };
 
   const handleReset = () => {
+    const nextSeq = getNextRgpNumber(existingRgps);
     setForm({
-      rgpNo: "(auto)",
+      rgpNo: nextSeq,
       date: toYMD(today),
       vendor: "",
       rgpType: "Fabric",
@@ -829,8 +1150,46 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
               </div>
               <div style={styles.formGrid}>
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>RGP Number <span style={styles.requiredStar}>*</span></label>
-                  <input value={form.rgpNo} readOnly style={styles.inputReadonly} />
+                  <label style={styles.label}>
+                    RGP Number <span style={styles.requiredStar}>*</span>
+                    <span style={{ fontSize: "11px", fontWeight: "600", color: "#10b981", marginLeft: "8px" }}>
+                      🔒 Auto-Locked
+                    </span>
+                  </label>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input
+                      value={form.rgpNo}
+                      readOnly
+                      style={{
+                        ...styles.input,
+                        backgroundColor: "#f8fafc",
+                        color: "#0f172a",
+                        fontWeight: "700",
+                        cursor: "not-allowed",
+                        letterSpacing: "0.5px",
+                        flex: 1
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={refreshRgpSequence}
+                      disabled={loadingRgpSeq}
+                      title="Sync next consecutive RGP Number"
+                      style={{
+                        padding: "10px 14px",
+                        backgroundColor: "#eff6ff",
+                        color: "#003f88",
+                        border: "1.5px solid #bfdbfe",
+                        borderRadius: "12px",
+                        cursor: loadingRgpSeq ? "wait" : "pointer",
+                        fontSize: "14px",
+                        fontWeight: "bold"
+                      }}
+                    >
+                      {loadingRgpSeq ? "⏳" : "🔄"}
+                    </button>
+                  </div>
+                  {errors.rgpNo && <span style={styles.errorText}>{errors.rgpNo}</span>}
                 </div>
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Issue Date <span style={styles.requiredStar}>*</span></label>
@@ -914,7 +1273,7 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
                   Add Item
                 </button>
               </div>
-              
+
               <div style={styles.itemsContainer}>
                 {(form.entries || []).map((row, idx) => {
                   const rowErr = Array.isArray(errors.entries) && errors.entries[idx] ? errors.entries[idx] : {};
@@ -991,17 +1350,17 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
         </div>
 
         {/* Action Bar */}
-        <div style={styles.actionBar}>
-          <button type="button" onClick={handleReset} disabled={submitting || submissionComplete} style={styles.secondaryButton}>
+        <div style={styles.actionBar} className="fabric-action-bar">
+          <button type="button" onClick={handleReset} disabled={submitting || submissionComplete} style={styles.secondaryButton} className="fabric-reset-btn">
             <Emoji size={16} mr={6}>↺</Emoji>
             Reset Form
           </button>
-          <div style={styles.actionButtons}>
-            <button type="submit" disabled={submitting || submissionComplete} style={styles.previewButton}>
+          <div style={styles.actionButtons} className="fabric-action-buttons">
+            <button type="button" onClick={handlePreview} disabled={submitting || submissionComplete} style={styles.previewButton} className="fabric-preview-btn">
               <Emoji size={16} mr={6}>👁️</Emoji>
               Preview Document
             </button>
-            <button type="button" onClick={handleFinalSubmit} disabled={submitting || submissionComplete} style={styles.primaryButton}>
+            <button type="button" onClick={handleFinalSubmit} disabled={submitting || submissionComplete} style={styles.primaryButton} className="fabric-submit-btn">
               <Emoji size={16} mr={6}>{submitting ? "⏳" : "✓"}</Emoji>
               {submitting ? "Processing..." : "Save & Create Rgp"}
             </button>
@@ -1018,31 +1377,36 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
 const styles = {
   container: {
     maxWidth: "2200px",
+    width: "100%",
     margin: "0 auto",
-    padding: "24px",
+    padding: "clamp(8px, 2vw, 24px)",
     fontFamily: "'Plus Jakarta Sans', 'Outfit', sans-serif",
     backgroundColor: "transparent",
     minHeight: "100vh",
+    boxSizing: "border-box",
   },
   headerWrapper: {
-    marginBottom: "28px",
+    marginBottom: "20px",
+    width: "100%",
   },
   header: {
     background: "linear-gradient(135deg, #003f88 0%, #00296b 100%)",
-    borderRadius: "20px",
-    padding: "24px 32px",
+    borderRadius: "16px",
+    padding: "clamp(12px, 2vw, 24px)",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     flexWrap: "wrap",
-    gap: "20px",
+    gap: "12px",
     boxShadow: "0 10px 30px rgba(0, 41, 107, 0.15)",
     border: "1px solid rgba(255, 255, 255, 0.1)",
+    boxSizing: "border-box",
   },
   headerLeft: {
     display: "flex",
     alignItems: "center",
-    gap: "20px",
+    gap: "12px",
+    flexWrap: "wrap",
   },
   backButton: {
     display: "inline-flex",
@@ -1050,10 +1414,10 @@ const styles = {
     backgroundColor: "rgba(255, 255, 255, 0.15)",
     color: "white",
     border: "1px solid rgba(255, 255, 255, 0.25)",
-    padding: "10px 20px",
-    borderRadius: "12px",
+    padding: "8px 16px",
+    borderRadius: "10px",
     cursor: "pointer",
-    fontSize: "0.9rem",
+    fontSize: "0.85rem",
     fontWeight: "600",
     transition: "all 0.2s ease",
     fontFamily: "inherit",
@@ -1061,35 +1425,37 @@ const styles = {
   logoContainer: {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
+    gap: "8px",
     backgroundColor: "rgba(255, 255, 255, 0.1)",
-    padding: "8px 16px",
+    padding: "6px 12px",
     borderRadius: "40px",
   },
   logoIcon: {
-    fontSize: "28px",
+    fontSize: "22px",
   },
   logoText: {
-    fontSize: "1rem",
+    fontSize: "0.9rem",
     fontWeight: "600",
     color: "white",
     letterSpacing: "0.5px",
   },
   headerCenter: {
     textAlign: "center",
+    minWidth: "200px",
   },
   headerTitle: {
     margin: 0,
-    fontSize: "2.5rem",
+    fontSize: "clamp(1.2rem, 3vw, 2rem)",
     fontWeight: "700",
     color: "white",
     display: "flex",
     alignItems: "center",
+    justifyContent: "center",
     letterSpacing: "-0.3px",
   },
   headerSubtitle: {
-    margin: "8px 0 0 0",
-    fontSize: "0.95rem",
+    margin: "4px 0 0 0",
+    fontSize: "0.85rem",
     color: "rgba(255, 255, 255, 0.8)",
     display: "flex",
     alignItems: "center",
@@ -1097,44 +1463,52 @@ const styles = {
   },
   rgpBadge: {
     backgroundColor: "rgba(255, 255, 255, 0.15)",
-    padding: "12px 20px",
-    borderRadius: "16px",
+    padding: "8px 16px",
+    borderRadius: "12px",
     textAlign: "center",
-    minWidth: "140px",
+    minWidth: "110px",
   },
   badgeLabel: {
-    fontSize: "0.7rem",
+    fontSize: "0.65rem",
     textTransform: "uppercase",
     letterSpacing: "1px",
     color: "rgba(255, 255, 255, 0.7)",
-    marginBottom: "4px",
+    marginBottom: "2px",
   },
   badgeValue: {
-    fontSize: "1.1rem",
+    fontSize: "1rem",
     fontWeight: "700",
     color: "white",
     fontFamily: "monospace",
   },
   form: {
     backgroundColor: "white",
-    borderRadius: "20px",
+    borderRadius: "16px",
     boxShadow: "0 10px 30px rgba(0, 41, 107, 0.03)",
     overflow: "hidden",
     border: "1px solid rgba(0, 63, 136, 0.08)",
+    width: "100%",
+    boxSizing: "border-box",
   },
   formBody: {
     display: "grid",
-    gridTemplateColumns: "480px 1fr",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))",
     gap: "0",
+    width: "100%",
+    boxSizing: "border-box",
   },
   leftColumn: {
-    padding: "28px",
+    padding: "clamp(12px, 2vw, 24px)",
     borderRight: "1px solid #cbd5e1",
     backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+    minWidth: "0",
   },
   rightColumn: {
-    padding: "28px",
+    padding: "clamp(12px, 2vw, 24px)",
     backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+    minWidth: "0",
   },
   section: {
     marginBottom: "32px",
@@ -1354,21 +1728,25 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "20px 28px",
+    flexWrap: "wrap",
+    gap: "12px",
+    padding: "clamp(12px, 2vw, 24px)",
     backgroundColor: "#f8fafc",
     borderTop: "1px solid #cbd5e1",
+    boxSizing: "border-box",
   },
   actionButtons: {
     display: "flex",
-    gap: "16px",
+    gap: "12px",
+    flexWrap: "wrap",
   },
   previewButton: {
-    padding: "12px 24px",
+    padding: "10px 20px",
     backgroundColor: "#003f88",
     color: "white",
     border: "none",
-    borderRadius: "12px",
-    fontSize: "0.9rem",
+    borderRadius: "10px",
+    fontSize: "0.85rem",
     fontWeight: "600",
     cursor: "pointer",
     transition: "all 0.2s ease",
@@ -1377,11 +1755,11 @@ const styles = {
     fontFamily: "inherit",
   },
   primaryButton: {
-    padding: "12px 28px",
+    padding: "10px 24px",
     background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
     color: "white",
     border: "none",
-    borderRadius: "12px",
+    borderRadius: "10px",
     fontSize: "0.9rem",
     fontWeight: "700",
     cursor: "pointer",
@@ -1392,12 +1770,12 @@ const styles = {
     boxShadow: "0 2px 8px rgba(16, 185, 129, 0.3)",
   },
   secondaryButton: {
-    padding: "12px 24px",
+    padding: "10px 20px",
     backgroundColor: "white",
     color: "#475569",
     border: "1.5px solid #cbd5e1",
-    borderRadius: "12px",
-    fontSize: "0.9rem",
+    borderRadius: "10px",
+    fontSize: "0.85rem",
     fontWeight: "500",
     cursor: "pointer",
     transition: "all 0.2s ease",
@@ -1407,7 +1785,7 @@ const styles = {
   },
 };
 
-// Add hover styles as CSS (since inline styles don't support :hover)
+// Add hover styles & responsive mobile media queries
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
   button:hover {
@@ -1424,20 +1802,22 @@ styleSheet.textContent = `
     border-color: #d4af37 !important;
     box-shadow: 0 8px 24px rgba(212, 175, 55, 0.1) !important;
   }
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  ::-webkit-scrollbar-track {
-    background: #f8fafc;
-    border-radius: 10px;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 10px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #003f88;
+  @media (max-width: 640px) {
+    .fabric-action-bar {
+      flex-direction: column-reverse !important;
+      align-items: stretch !important;
+      gap: 10px !important;
+    }
+    .fabric-action-buttons {
+      flex-direction: column !important;
+      width: 100% !important;
+      gap: 8px !important;
+    }
+    .fabric-action-buttons button,
+    .fabric-action-bar button {
+      width: 100% !important;
+      justify-content: center !important;
+    }
   }
 `;
 document.head.appendChild(styleSheet);

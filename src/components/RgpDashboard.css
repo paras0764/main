@@ -346,3 +346,90 @@
 .rgp-action-icon {
   color: #64748b;
 }
+
+/* ==========================================================================
+   Comprehensive Responsive System for All Displays
+   ========================================================================== */
+
+/* Tablets (iPad, Android Tablets) */
+@media (max-width: 1024px) {
+  .rgp-container {
+    padding: 20px 14px 28px;
+  }
+
+  .rgp-card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .rgp-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Mobile Devices (iPhone, Galaxy, Pixel) */
+@media (max-width: 640px) {
+  .rgp-appbar-inner {
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .rgp-brand {
+    font-size: 16px;
+  }
+
+  .rgp-scan {
+    grid-column: 1 / -1;
+    max-width: 100%;
+    order: 3;
+    margin-top: 2px;
+  }
+
+  .rgp-container {
+    padding: 14px 10px 24px;
+  }
+
+  .rgp-card-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .rgp-card {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .rgp-grid-bottom {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .rgp-panel {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .rgp-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 10px;
+  }
+
+  .rgp-table {
+    min-width: 500px;
+  }
+}
+
+/* Small Screens (<400px) */
+@media (max-width: 400px) {
+  .rgp-brand {
+    font-size: 15px;
+  }
+
+  .rgp-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

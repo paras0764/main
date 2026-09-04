@@ -18,12 +18,18 @@ export function titleCase(str) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+import {
+  GOOGLE_API_KEY as CONFIG_API_KEY,
+  SHEET_ID_CUTTING,
+  SHEET_ID_ZIP_RGP
+} from '../config/apiConfig';
+
 // ============================
-// Config (replace via .env)
+// Config (via centralized apiConfig / .env)
 // ============================
-export const GOOGLE_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-export const SHEET_ID = "1Hj3JeJEKB43aYYWv8gk2UhdU6BWuEQfCg5pBlTdBMNA";
-export const SHEET_IDD = "16mifNw0WMIlnZ1XRHsuH_8kVUm_6Y1O3uVsoM-Hjppo";
+export const GOOGLE_API_KEY = CONFIG_API_KEY;
+export const SHEET_ID = SHEET_ID_CUTTING;
+export const SHEET_IDD = SHEET_ID_ZIP_RGP;
 
 // Safety guard
 export const MAX_RANGE = 'A1:Z';

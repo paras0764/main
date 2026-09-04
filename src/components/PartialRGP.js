@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { GOOGLE_API_KEY, DEFAULT_RGP_SPREADSHEET_IDS } from "../config/apiConfig";
+
 /* ──────────────────────────────────────────────────────────────────────────
    Config
 ────────────────────────────────────────────────────────────────────────── */
-const HARDCODED_API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
-const DEFAULT_SPREADSHEET_ID = "1BZ-ufmxeqa9XdU-jkuIgeNxHvhnYKjWj4UpnI3bHJKo";
+const HARDCODED_API_KEY = GOOGLE_API_KEY;
+const DEFAULT_SPREADSHEET_IDS = DEFAULT_RGP_SPREADSHEET_IDS;
 const DEFAULT_RANGE = "Fabric_RGP!A1:R"; // includes header row at A1
 
 // ⛔️ Never display/export (case-insensitive; includes your VVEHICLE NO. typo)
@@ -29,7 +31,7 @@ const isHidden = (key) =>
 ────────────────────────────────────────────────────────────────────────── */
 function buildSheetsUrl({ spreadsheetId, range, apiKey }) {
   const keyToUse = apiKey || HARDCODED_API_KEY;
-  const idToUse = spreadsheetId || DEFAULT_SPREADSHEET_ID;
+  const idToUse = spreadsheetId || DEFAULT_SPREADSHEET_IDS[0];
   const rangeToUse = range || DEFAULT_RANGE;
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${idToUse}/values/${encodeURIComponent(
     rangeToUse
@@ -133,7 +135,7 @@ function pdfHeaderLabel(key) {
    Component
 ────────────────────────────────────────────────────────────────────────── */
 export default function PartialRgp({
-  spreadsheetId = DEFAULT_SPREADSHEET_ID,
+  spreadsheetId,
   apiKey = HARDCODED_API_KEY,
   range = DEFAULT_RANGE,
   statusField = "Status",
@@ -184,22 +186,51 @@ export default function PartialRgp({
     abortRef.current = ctrl;
 
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(
-          `Google Sheets API error ${res.status}: ${text?.slice(0, 200)}`
-        );
+      const ids = spreadsheetId ? [spreadsheetId] : DEFAULT_SPREADSHEET_IDS;
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const u = buildSheetsUrl({ spreadsheetId: id, range, apiKey });
+            const res = await fetch(u, { signal: ctrl.signal });
+            if (!res.ok) return [];
+            const json = await res.json();
+            return rowsToObjects(json.values || []);
+          } catch (e) {
+            console.warn(`Failed to load sheet ${id}:`, e);
+            return [];
+          }
+        })
+      );
+      const combined = results.flat();
+      const seen = new Set();
+      const uniqueRows = combined.filter((r) => {
+        const rgpVal = r["RGP No"] || r["RGP NO"] || r["rgpNo"] || "";
+        if (!rgpVal) return true;
+        const key = String(rgpVal).trim().toUpperCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (uniqueRows.length > 0) {
+        setRawRows(uniqueRows);
+        try {
+          localStorage.setItem("rgp_cache_Fabric_RGP", JSON.stringify(uniqueRows));
+        } catch (_) {}
+      } else {
+        try {
+          const cached = JSON.parse(localStorage.getItem("rgp_cache_Fabric_RGP") || "[]");
+          if (cached.length > 0) setRawRows(cached);
+        } catch (_) {}
       }
-      const json = await res.json();
-      const rows = rowsToObjects(json.values || []);
-      setRawRows(rows);
     } catch (err) {
       if (err?.name === "AbortError") return;
-      setError(
-        err?.message ||
-          "Failed to load data. Ensure your sheet is public and the API key is valid."
-      );
+      try {
+        const cached = JSON.parse(localStorage.getItem("rgp_cache_Fabric_RGP") || "[]");
+        if (cached.length > 0) {
+          setRawRows(cached);
+          return;
+        }
+      } catch (_) {}
     } finally {
       setLoading(false);
     }
@@ -242,7 +273,9 @@ export default function PartialRgp({
   const closedRows = useMemo(() => {
     return rawRows.filter((row) => {
       const v = String(row[statusField] ?? "").trim().toLowerCase();
-      return v === "partial";
+      const retQty = parseFloat(row["Returned Quantity"] || row["Returned Qty"] || 0);
+      const sentQty = parseFloat(row["Quantity Sent"] || row["Quantity"] || row["Qty"] || 0);
+      return v === "partial" || v.includes("partial") || (retQty > 0 && sentQty > 0 && retQty < sentQty);
     });
   }, [rawRows, statusField]);
 
@@ -605,24 +638,20 @@ export default function PartialRgp({
           gap: 16px;
           padding: 20px 24px;
           margin-bottom: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 250, 252, 0.9) 100%);
-          backdrop-filter: blur(12px);
-          border-radius: 20px;
-          box-shadow:
-            0 8px 32px rgba(15, 23, 42, 0.08),
-            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: linear-gradient(135deg, #003f88 0%, #00296b 100%);
+          color: #ffffff;
+          border-radius: 16px;
+          box-shadow: 0 10px 30px rgba(0, 41, 107, 0.15);
         }
 
         .rgp-title {
           margin: 0;
           font-weight: 800;
           letter-spacing: -0.02em;
-          background: linear-gradient(135deg, #0e12e9ff 0%, #3b82f6 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          font-size: clamp(24px, 2.5vw, 32px);
+          color: #ffffff !important;
+          -webkit-text-fill-color: #ffffff !important;
+          font-size: clamp(20px, 2.5vw, 28px);
         }
 
         .rgp-actions {
@@ -635,45 +664,25 @@ export default function PartialRgp({
           display: inline-flex;
           align-items: center;
           gap: 8px;
-          height: 42px;
+          height: 40px;
           padding: 0 18px;
-          border-radius: 12px;
-          border: 1px solid rgba(226, 232, 240, 0.8);
-          background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+          border-radius: 10px;
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          background: rgba(255, 255, 255, 0.15);
           font-size: 13px;
           font-weight: 600;
-          color: #475569;
+          color: #ffffff;
           cursor: pointer;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          box-shadow:
-            0 2px 8px rgba(2, 6, 23, 0.04),
-            inset 0 1px 0 rgba(255, 255, 255, 0.8);
+          transition: all 0.2s ease;
           position: relative;
           overflow: hidden;
         }
 
-        .btn::before {
-          content: '';
-          position: absolute;
-          top: 0;
-          left: -100%;
-          width: 100%;
-          height: 100%;
-          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-          transition: left 0.5s;
-        }
-
         .btn:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow:
-            0 8px 25px rgba(2, 6, 23, 0.12),
-            inset 0 1px 0 rgba(255, 255, 255, 0.8);
-          border-color: #cbd5e1;
-          color: #0f172a;
-        }
-
-        .btn:hover::before {
-          left: 100%;
+          background: rgba(255, 255, 255, 0.3);
+          transform: translateY(-1px);
+          color: #ffffff;
+          border-color: rgba(255, 255, 255, 0.4);
         }
 
         .btn:disabled {
@@ -683,19 +692,16 @@ export default function PartialRgp({
         }
 
         .btn-primary {
-          background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%);
-          color: white;
-          border-color: transparent;
-          box-shadow:
-            0 4px 16px rgba(14, 165, 233, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+          background: #ffffff !important;
+          color: #003f88 !important;
+          border-color: #ffffff !important;
+          font-weight: 700 !important;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
 
         .btn-primary:hover {
-          background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
-          box-shadow:
-            0 8px 25px rgba(14, 165, 233, 0.4),
-            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+          background: #f8fafc !important;
+          color: #00296b !important;
         }
 
         /* Controls */
@@ -750,16 +756,16 @@ export default function PartialRgp({
           flex-wrap: wrap;
           margin-top: 8px;
           font-size: 12px;
-          color: #64748b;
+          color: #bfdbfe;
         }
 
         .chip {
-          background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
-          border: 1px solid rgba(226, 232, 240, 0.8);
-          color: #475569;
+          background: rgba(255, 255, 255, 0.15);
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          color: #ffffff;
           padding: 4px 12px;
           border-radius: 20px;
-          font-weight: 500;
+          font-weight: 600;
           backdrop-filter: blur(8px);
         }
 
@@ -972,6 +978,63 @@ export default function PartialRgp({
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+
+        /* Mobile & Tablet Responsive Layout */
+        @media (max-width: 768px) {
+          .rgp-shell {
+            padding: 10px 8px;
+          }
+          .rgp-header {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+            padding: 14px;
+            border-radius: 14px;
+            position: relative;
+          }
+          .rgp-title {
+            font-size: 1.35rem;
+            text-align: left;
+          }
+          .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+          }
+          .chip {
+            font-size: 11px;
+            padding: 3px 8px;
+          }
+          .rgp-actions {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            width: 100%;
+          }
+          .btn {
+            justify-content: center;
+            height: 38px;
+            font-size: 12px;
+            padding: 0 10px;
+          }
+          .controls {
+            padding: 12px;
+            gap: 8px;
+            border-radius: 14px;
+          }
+          .input, .select {
+            height: 40px;
+            font-size: 13px;
+          }
+          .pagination {
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+          }
         }
       `}</style>
 

@@ -3,12 +3,18 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import QRCode from 'qrcode';
 
+import {
+  SHEET_ID_ZIP_RGP,
+  GOOGLE_API_KEY,
+  WEB_APP_URL_ZIP
+} from '../config/apiConfig';
+
 // Google Sheets Configuration
-const SPREADSHEET_ID = '16mifNw0WMIlnZ1XRHsuH_8kVUm_6Y1O3uVsoM-Hjppo';
-const API_KEY = 'AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk';
+const SPREADSHEET_ID = SHEET_ID_ZIP_RGP;
+const API_KEY = GOOGLE_API_KEY;
 const PURCHASE_ORDERS_RANGE = 'ZipPurchaseOrders!A:V';
 const ZIP_DATA_RANGE = 'ZipData!A:C';
-const QR_SYSTEM_URL = 'https://script.google.com/macros/s/AKfycbwwEnHSdSvlLpKRYgMpxcyEukAqrqeTw-M4KQxtkI7dlIt0aRx2l3zQtJgUEYGw4O3-/exec';
+const QR_SYSTEM_URL = WEB_APP_URL_ZIP;
 
 // Helper functions
 const formatDate = (dateString) => {

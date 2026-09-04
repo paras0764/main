@@ -2,17 +2,23 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { jsPDF } from "jspdf";
 
+import {
+  WEB_APP_URL_PO_LOT,
+  SHEET_ID_PURCHASE_ORDER,
+  SHEET_ID_CUTTING,
+  GOOGLE_API_KEY
+} from "../config/apiConfig";
+
 /** =========================
  * CONFIG
  * ========================= */
-const WEB_APP_BASE =
-  "https://script.google.com/macros/s/AKfycbxLWl9NzLTc7PdY4hxeVwv9tVwdjC4du0YBMYloqIBZdvFzGkBm-R4nT5Ki5VNtUyJjfA/exec";
+const WEB_APP_BASE = WEB_APP_URL_PO_LOT;
 
-const SHEET_ID = "1hy43mDxXtGVq4jeMV_NxX25Q7tnX55NnplN7eqpT74k";
+const SHEET_ID = SHEET_ID_PURCHASE_ORDER;
 const RANGE_A1 = "SHEET1!A1:C";
-const Sheet = "1Hj3JeJEKB43aYYWv8gk2UhdU6BWuEQfCg5pBlTdBMNA";
+const Sheet = SHEET_ID_CUTTING;
 const INDEX_SHEET_RANGE = "Index!A1:D";
-const API_KEY = "AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk";
+const API_KEY = GOOGLE_API_KEY;
 
 /** =========================
  * utils
@@ -377,7 +383,7 @@ function generatePurchaseOrderPDF({ payload, options = {} }) {
     const supPad = 12;
     const supBodyW = wSup - supPad * 2;
     const supLines = [
-      payload.supplierName || "",
+      ...wrap(payload.supplierName || "", supBodyW),
       ...wrap(payload.supplierAddress || "", supBodyW),
       ...(payload.supplierPhone ? [`Phone: ${payload.supplierPhone}`] : []),
       ...(payload.supplierEmail ? [`Email: ${payload.supplierEmail}`] : []),

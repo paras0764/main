@@ -3,8 +3,14 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import QRCode from 'qrcode';
 
+import {
+  WEB_APP_URL_LEGACY_RGP,
+  SHEET_ID_ZIP_RGP,
+  GOOGLE_API_KEY
+} from '../config/apiConfig';
+
 // QR System Configuration
-const QR_SYSTEM_URL = "https://script.google.com/macros/s/AKfycbyPKPQQ_RToEVrfFxpzV5lmlwYvC4_psOof-my3evnTugHT34uuUi7g78NVHs2fmBM/exec";
+const QR_SYSTEM_URL = WEB_APP_URL_LEGACY_RGP;
 
 // QR Code Helper Function
 const toDataURL = (src) =>
@@ -738,8 +744,8 @@ const ZipDashboard = () => {
   const tableRef = useRef();
 
   // Google Sheets configuration
-  const SPREADSHEET_ID = '16mifNw0WMIlnZ1XRHsuH_8kVUm_6Y1O3uVsoM-Hjppo';
-  const API_KEY = 'AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk';
+  const SPREADSHEET_ID = SHEET_ID_ZIP_RGP;
+  const API_KEY = GOOGLE_API_KEY;
   const RANGE = 'ZipPurchaseOrders!A:AA';
 
   useEffect(() => {

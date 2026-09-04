@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  SHEET_ID_ZIP_RGP,
+  GOOGLE_API_KEY,
+  WEB_APP_URL_ZIP_APPROVAL
+} from '../config/apiConfig';
 
 const SheetDataViewer = () => {
   const [data, setData] = useState([]);
@@ -13,11 +18,11 @@ const SheetDataViewer = () => {
   const [selectedPoData, setSelectedPoData] = useState(null);
   const [zipQualityData, setZipQualityData] = useState([]);
 
-  const SPREADSHEET_ID = '16mifNw0WMIlnZ1XRHsuH_8kVUm_6Y1O3uVsoM-Hjppo';
-  const API_KEY = 'AIzaSyAomDFBkOySlIxKWSKGHe6ATv9gvaBr7uk';
+  const SPREADSHEET_ID = SHEET_ID_ZIP_RGP;
+  const API_KEY = GOOGLE_API_KEY;
   const RANGE = 'ZipPurchaseOrders!A:AA';
   const ZIP_DATA_RANGE = 'ZipData!A:C';
-  const QR_SYSTEM_URL = "https://script.google.com/macros/s/AKfycbz74M1rClIrxoXcforgEm7cbB6xqsixCsu3j3lr2GUchMCQTXJ50NWVQVFM0tqchn3n/exec";
+  const QR_SYSTEM_URL = WEB_APP_URL_ZIP_APPROVAL;
 
   // Professional Blue & White Theme Styles
   const styles = {
