@@ -1,59 +1,53 @@
+
 /**
  * Centralized API & Service Configuration
- * 
+ *
  * Values are dynamically loaded from environment variables (defined in .env or CI/CD),
  * with sensible defaults to ensure uninterrupted local development and testing.
  */
 
 // 1. Google Cloud API Key
 export const GOOGLE_API_KEY =
-  process.env.REACT_APP_GOOGLE_API_KEY ||
-  ";
+  process.env.REACT_APP_GOOGLE_API_KEY || "";
 
 // 2. Google Sheet Spreadsheet IDs
 export const SHEET_IDS = {
   RGP_NEW:
-    process.env.REACT_APP_SHEET_ID_RGP_NEW ||
-    "",
+    process.env.REACT_APP_SHEET_ID_RGP_NEW || "",
   RGP_OLD:
-    process.env.REACT_APP_SHEET_ID_RGP_OLD ||
-    "",
+    process.env.REACT_APP_SHEET_ID_RGP_OLD || "",
   CUTTING:
-    process.env.REACT_APP_SHEET_ID_CUTTING ||
-    "",
+    process.env.REACT_APP_SHEET_ID_CUTTING || "",
   DORI:
-    process.env.REACT_APP_SHEET_ID_DORI ||
-    "",
+    process.env.REACT_APP_SHEET_ID_DORI || "",
   ZIP_RGP:
-    process.env.REACT_APP_SHEET_ID_ZIP_RGP ||
-    "",
+    process.env.REACT_APP_SHEET_ID_ZIP_RGP || "",
   PURCHASE_ORDER:
-    process.env.REACT_APP_SHEET_ID_PURCHASE_ORDER ||
-    "",
+    process.env.REACT_APP_SHEET_ID_PURCHASE_ORDER || "",
 };
 
 // 3. Google Apps Script Web App Deployment URLs (/exec)
 export const WEB_APP_URLS = {
   RGP:
-    process.env.REACT_APP_WEB_APP_URL_RGP ||
+    process.env.REACT_APP_WEB_APP_URL_RGP || "",
   DORI:
-    process.env.REACT_APP_WEB_APP_URL_DORI ||
+    process.env.REACT_APP_WEB_APP_URL_DORI || "",
   LEGACY_RGP:
-    process.env.REACT_APP_WEB_APP_URL_LEGACY_RGP ||
+    process.env.REACT_APP_WEB_APP_URL_LEGACY_RGP || "",
   PO_ASPER_SHADE:
-    process.env.REACT_APP_WEB_APP_URL_PO_ASPER_SHADE ||
+    process.env.REACT_APP_WEB_APP_URL_PO_ASPER_SHADE || "",
   PO_DASHBOARD:
-    process.env.REACT_APP_WEB_APP_URL_PO_DASHBOARD ||
+    process.env.REACT_APP_WEB_APP_URL_PO_DASHBOARD || "",
   PO_LOT:
-    process.env.REACT_APP_WEB_APP_URL_PO_LOT ||
+    process.env.REACT_APP_WEB_APP_URL_PO_LOT || "",
   PO_TRACKING:
-    process.env.REACT_APP_WEB_APP_URL_PO_TRACKING ||
+    process.env.REACT_APP_WEB_APP_URL_PO_TRACKING || "",
   ZIP:
-    process.env.REACT_APP_WEB_APP_URL_ZIP ||
+    process.env.REACT_APP_WEB_APP_URL_ZIP || "",
   ZIP_APPROVAL:
-    process.env.REACT_APP_WEB_APP_URL_ZIP_APPROVAL ||
+    process.env.REACT_APP_WEB_APP_URL_ZIP_APPROVAL || "",
   PO_SUMMARY_GATE_RECEIVE:
-    process.env.REACT_APP_WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE ||
+    process.env.REACT_APP_WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE || "",
 };
 
 // Convenience references
@@ -77,7 +71,8 @@ export const WEB_APP_URL_PO_DASHBOARD = WEB_APP_URLS.PO_DASHBOARD;
 export const WEB_APP_URL_PO_LOT = WEB_APP_URLS.PO_LOT;
 export const WEB_APP_URL_PO_TRACKING = WEB_APP_URLS.PO_TRACKING;
 export const WEB_APP_URL_PO_ASPER_SHADE = WEB_APP_URLS.PO_ASPER_SHADE;
-export const WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE = WEB_APP_URLS.PO_SUMMARY_GATE_RECEIVE;
+export const WEB_APP_URL_PO_SUMMARY_GATE_RECEIVE =
+  WEB_APP_URLS.PO_SUMMARY_GATE_RECEIVE;
 
 const API_CONFIG = {
   GOOGLE_API_KEY,
@@ -102,3 +97,4 @@ const API_CONFIG = {
 };
 
 export default API_CONFIG;
+
