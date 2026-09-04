@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+// import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import QRCode from 'qrcode';
@@ -161,6 +162,7 @@ export const generateDoriPoPdf = async (row, doriQualityData = []) => {
   const supervisor = row['Supervisor'] || '';
   const garmentType = row['Garment Type'] || '';
   const style = row['Style'] || '';
+  // const fabric = row['Fabric'] || '';
   const fabric = row['Fabric'] || '';
   const brand = row['Brand'] || '';
   const priority = row['Priority'] || 'Normal';
@@ -538,7 +540,9 @@ export const generateDoriPoPdf = async (row, doriQualityData = []) => {
   drawFooterWithSignatures();
   drawSimpleFooter(currentPage, pageCount);
 
-  const cleanLot = lotNumber.replace(/[^\w\-]+/g, '_');
+  // const cleanLot = lotNumber.replace(/[^\w\-]+/g, '_');
+  const cleanLot = lotNumber.replace(/[^\w-]+/g, '_');
+
   const cleanDate = printableDate(issueDate).replace(/\//g, '-');
   const filename = `Lot_${cleanLot}_Purchase_Order_${cleanDate || 'report'}.pdf`;
 

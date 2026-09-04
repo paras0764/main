@@ -165,31 +165,31 @@ function daysDiff(start, end) {
 }
 
 /** Strict status filter. Keeps only pending rows based on Status or missing return-like dates. */
-function isRowPending({ row, statusField, pendingValues, returnDateField }) {
-  if (statusField && Object.prototype.hasOwnProperty.call(row, statusField)) {
-    const v = String(row[statusField] ?? "").trim().toLowerCase();
-    const pending = pendingValues
-      .map((x) => String(x).trim().toLowerCase())
-      .includes(v);
-    if (pending) return true;
-    // If Status exists and isn't pending, treat as not pending:
-    return false;
-  }
-  const fallbackFields = [
-    returnDateField,
-    "Return Date",
-    "Receive Date",
-    "Close Date",
-    "Received"
-  ].filter(Boolean);
-  for (const f of fallbackFields) {
-    if (f in row) {
-      const val = String(row[f] ?? "").trim();
-      if (!val) return true;
-    }
-  }
-  return false;
-}
+// function isRowPending({ row, statusField, pendingValues, returnDateField }) {
+//   if (statusField && Object.prototype.hasOwnProperty.call(row, statusField)) {
+//     const v = String(row[statusField] ?? "").trim().toLowerCase();
+//     const pending = pendingValues
+//       .map((x) => String(x).trim().toLowerCase())
+//       .includes(v);
+//     if (pending) return true;
+//     // If Status exists and isn't pending, treat as not pending:
+//     return false;
+//   }
+//   const fallbackFields = [
+//     returnDateField,
+//     "Return Date",
+//     "Receive Date",
+//     "Close Date",
+//     "Received"
+//   ].filter(Boolean);
+//   for (const f of fallbackFields) {
+//     if (f in row) {
+//       const val = String(row[f] ?? "").trim();
+//       if (!val) return true;
+//     }
+//   }
+//   return false;
+// }
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -590,7 +590,8 @@ export default function ClosedRgp({
       "▲": "^", "▼": "v", "▶": ">", "◀": "<",
     };
     s = s.replace(/["“”„‟‘’‚‛–—-•…→←↔⇒⇐▲▼▶◀]/g, (ch) => map[ch] || "");
-    s = s.replace(/[^\x00-\x7E]/g, "");
+    // s = s.replace(/[^\x00-\x7E]/g, "");
+    s = s.replace(/[^\x20-\x7E]/g, "");
     s = s.replace(/\s+/g, " ").trim();
     return s;
   }
@@ -686,7 +687,7 @@ export default function ClosedRgp({
     const labelSet = new Set(headerLabels);
 
     // Helper to check presence by friendly label or original key
-    const hasCol = (label) => labelSet.has(nameOf(label)) || labelSet.has(label);
+    // const hasCol = (label) => labelSet.has(nameOf(label)) || labelSet.has(label);
 
     // Weight defaults
     const weights = {};

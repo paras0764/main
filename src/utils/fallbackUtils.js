@@ -16,7 +16,8 @@ export function normalizeRgpNo(val) {
   return String(val || "")
     .toUpperCase()
     .trim()
-    .replace(/[\s\/-]/g, "");
+    // .replace(/[\s\/-]/g, "");
+    .replace(/[\s/-]/g, "");
 }
 
 /**

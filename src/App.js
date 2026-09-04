@@ -11,7 +11,7 @@ import PurchaseOrderForm from "./components/PurchaseOrderForm";
 import POLot from "./components/POLot";
 import PuneetZip from "./components/PunnetZip";
 import ZipDashboard from "./components/ZipDashboard";
-import ApprovalManager from "./components/ZIpApprovalManager";
+// import ApprovalManager from "./components/ZIpApprovalManager";
 import SheetDataViewer from "./components/ZIpApprovalManager";
 import DoriOrder from "./components/DoriOrder";
 import DoriPurchaseDashboard from "./components/DoriDashboard";
