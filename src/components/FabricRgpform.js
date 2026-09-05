@@ -828,12 +828,8 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
   const handleFinalSubmit = async () => {
     if (submitting) return;
 
-    if (!WEB_APP_URL.includes("/exec")) {
-      alert("❌ WEB_APP_URL must be a deployed /exec URL");
-      return;
-    }
-
     const first = (form.entries && form.entries[0]) || {};
+
     const legacyQty = (Number(first.qty1) || 0) || "";
     const rgpTypeFinal = form.rgpType === "Other" ? customRgpType.trim() : form.rgpType;
 
