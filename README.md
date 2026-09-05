@@ -39,6 +39,21 @@ Instead, it will copy all the configuration files and the transitive dependencie
 
 You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
 
+## Deployment and secrets
+
+This is a Create React App project. Copy `.env.example` to `.env` for local development and fill in the values there. Never commit `.env`, API keys, service-account files, certificates, or generated `build/` output.
+
+For a GitHub deployment, configure the same `REACT_APP_*` variables in the deployment provider's build environment, then run:
+
+```bash
+npm ci
+npm test -- --watchAll=false
+npm run build
+```
+
+`REACT_APP_*` variables are public in a browser build. Restrict the Google API key by API and HTTP referrer, and ensure the Google Sheets and Apps Script deployments only grant the intended access. Do not place server-only credentials in this project; use a backend proxy for secrets that must remain private.
+
+If a key has ever been committed or shared, revoke it and create a replacement before deploying.
 ## Learn More
 
 You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).

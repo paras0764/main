@@ -13,11 +13,14 @@
 
 # misc
 .DS_Store
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+/.env
+/.env.*
+!.env.example
+/.cache
+*.pem
+*.key
+*.p12
+*.jks
 API_KEYS_BACKUP.txt
 
 npm-debug.log*
