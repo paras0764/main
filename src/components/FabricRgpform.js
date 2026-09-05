@@ -869,11 +869,20 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
     try {
       console.log("Submitting payload to:", WEB_APP_URL);
 
-      const res = await fetch(WEB_APP_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
-        body: "data=" + encodeURIComponent(JSON.stringify(payload)),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      let res;
+      try {
+        res = await fetch(WEB_APP_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: "data=" + encodeURIComponent(JSON.stringify(payload)),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
 
@@ -950,6 +959,7 @@ export default function FabricRgpForm({ today = new Date(), onSubmit, onBack }) 
       setAuthorizedByCustomValue("");
 
       alert(`✅ RGP Created Successfully!\nRGP No: ${assignedRgpNo}\nNext Sequential RGP: ${nextRgpNo}\nPDF has been downloaded.`);
+
 
     } catch (err) {
       console.warn("Live submit failed, switching to safe offline queue mode:", err);
